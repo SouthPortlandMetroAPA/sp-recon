@@ -61,72 +61,90 @@
     font-family: ui-monospace, monospace; font-size: 0.85em;
   }
 
+  /* ─── Upload zone ─────────────────────────────────────────────────*/
   .upload-zone {
-    border: 2px dashed var(--border);
-    border-radius: 10px;
-    padding: 22px;
-    text-align: center;
-    background: #fafbfc;
-    cursor: pointer;
-    transition: border-color 120ms, background-color 120ms;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 8px; padding: 36px 22px; text-align: center;
+    border: 2px dashed var(--border); border-radius: 14px;
+    background: #fafbfc; cursor: pointer;
+    transition: border-color 120ms, background-color 120ms, transform 120ms;
   }
   .upload-zone:hover, .upload-zone.dragover {
-    border-color: var(--spm-blue);
-    background: #eff6ff;
+    border-color: var(--spm-blue); background: #eff6ff;
   }
-  .upload-zone.loaded {
-    border-color: var(--ok);
-    background: #f0fdf4;
+  .upload-zone.dragover { transform: scale(1.01); }
+  .upload-zone .uz-icon {
+    width: 52px; height: 52px; color: var(--spm-blue); opacity: 0.7;
   }
-  .upload-zone .uz-title { font-weight: 700; margin-bottom: 4px; }
-  .upload-zone .uz-sub { color: var(--text-dim); font-size: 0.88rem; }
+  .upload-zone .uz-title { font-weight: 800; font-size: 1.05rem; color: var(--text); }
+  .upload-zone .uz-sub { color: var(--text-dim); font-size: 0.9rem; max-width: 360px; line-height: 1.4; }
   .upload-zone input[type=file] { display: none; }
-  .upload-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
-  }
-  @media (max-width: 600px) {
-    .upload-grid { grid-template-columns: 1fr; }
-  }
+
+  /* ─── Slot indicators (file status) ────────────────────────────────*/
   .slot-row {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-    margin-top: 10px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-top: 14px;
   }
   @media (max-width: 600px) {
     .slot-row { grid-template-columns: 1fr; }
   }
   .slot {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px;
-    border: 1px solid var(--border); border-radius: 8px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: 10px;
     background: #fafbfc;
+    transition: border-color 120ms, background-color 120ms;
   }
   .slot.filled { background: #f0fdf4; border-color: var(--ok); }
-  .slot-dot {
-    width: 10px; height: 10px; border-radius: 50%;
-    background: #d1d5db; flex: 0 0 auto;
+  .slot-icon {
+    width: 32px; height: 32px; flex: 0 0 auto;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: #e5e7eb; color: #9ca3af;
   }
-  .slot.filled .slot-dot { background: var(--ok); }
-  .slot-label { font-weight: 800; font-size: 0.88rem; }
-  .slot-sub { font-size: 0.78rem; color: var(--text-dim); margin-top: 2px; }
+  .slot.filled .slot-icon { background: var(--ok); color: #fff; }
+  .slot-icon svg { width: 18px; height: 18px; }
+  .slot-text { flex: 1; min-width: 0; }
+  .slot-label { font-weight: 800; font-size: 0.95rem; color: var(--text); }
+  .slot-sub {
+    font-size: 0.82rem; color: var(--text-dim); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ─── Action bar ───────────────────────────────────────────────────*/
+  .action-bar {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    margin-top: 16px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .action-bar .grow { flex: 1; }
+
+  /* ─── Session-mismatch banner ─────────────────────────────────────*/
   .banner {
-    margin-top: 12px; padding: 10px 12px;
-    border-radius: 8px; font-size: 0.9rem;
+    margin-top: 14px; padding: 12px 14px;
+    border-radius: 10px; font-size: 0.9rem;
+    display: flex; align-items: flex-start; gap: 10px; line-height: 1.45;
   }
   .banner.err {
     background: #fef2f2; color: #7f1d1d; border: 1px solid #fecaca;
   }
+  .banner-icon { flex: 0 0 auto; width: 20px; height: 20px; }
+  .banner strong { color: #991b1b; }
 
+  /* ─── Buttons ──────────────────────────────────────────────────────*/
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
-    font: inherit; font-weight: 700; font-size: 0.92rem;
-    padding: 8px 14px; border-radius: 8px;
+    font: inherit; font-weight: 800; font-size: 0.95rem;
+    padding: 10px 18px; border-radius: 9px;
     background: var(--spm-blue); color: #fff;
     border: 1px solid var(--spm-blue);
-    cursor: pointer;
+    cursor: pointer; transition: filter 120ms, opacity 120ms;
   }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn:hover:not(:disabled) { filter: brightness(0.92); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
   .btn.secondary { background: #fff; color: var(--spm-blue); }
-  .btn.danger { background: #fff; color: var(--bad); border-color: var(--bad); }
+  .btn.danger    { background: #fff; color: var(--bad); border-color: var(--bad); }
+  .btn.large     { padding: 11px 22px; font-size: 1rem; }
 
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
   th, td {
@@ -173,16 +191,26 @@
   .by-div-list { margin-top: 4px; padding-left: 14px; font-size: 0.85rem; color: var(--text-dim); }
   .by-div-list li { margin: 2px 0; }
 
+  /* Auto-update — matches BreakOut/OurRack canonical pattern. */
   .update-overlay {
-    position: fixed; inset: 0; background: rgba(15,23,42,0.85);
-    display: none; align-items: center; justify-content: center;
-    z-index: 9999; color: #fff; text-align: center; padding: 24px;
+    position: fixed; inset: 0; background: rgba(10,20,40,0.72);
+    z-index: 9999; display: none; align-items: center; justify-content: center;
+    padding: 24px;
   }
   .update-overlay.shown { display: flex; }
-  .update-overlay .uo-card {
-    background: var(--bg-card); color: var(--text);
-    border-radius: 14px; padding: 22px; max-width: 380px;
+  .update-box {
+    background: #fff; border-radius: 14px; padding: 32px;
+    max-width: 380px; text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
   }
+  .update-spinner {
+    width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%;
+    border: 5px solid rgba(0,49,161,0.15);
+    border-top-color: var(--spm-blue);
+    animation: spin 0.85s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .update-title { font-size: 1.1rem; font-weight: 800; color: var(--spm-blue); margin-bottom: 6px; }
 
   .toast {
     position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
@@ -206,10 +234,10 @@
 <main id="main"></main>
 
 <div class="update-overlay" id="updateOverlay">
-  <div class="uo-card">
-    <h2 style="margin:0 0 8px;font-size:1.05rem;">New version available</h2>
-    <p style="margin:0 0 14px;">A newer version of SP Reconciler has been deployed. The page will reload shortly to pick it up.</p>
-    <div class="ver" id="versionDetail" style="color:var(--text-dim);font-size:0.85rem;"></div>
+  <div class="update-box">
+    <div class="update-spinner"></div>
+    <div class="update-title">Updating SP Reconciler</div>
+    <div>A new version is being deployed&hellip;</div>
   </div>
 </div>
 
@@ -531,24 +559,37 @@ function render() {
   // Upload card — single drop zone, auto-detect type, two slot indicators.
   html += '<div class="card">'
     + '<h2>Upload session reports</h2>'
-    + '<label class="upload-zone" data-uz="auto" id="dropZone">'
-    + '<div class="uz-title">Drop PDF here (or tap to choose)</div>'
-    + '<div class="uz-sub">Auto-detects all-league vs by-division. Upload one at a time or both at once.</div>'
-    + '<input type="file" accept="application/pdf" multiple data-uz-input="auto">'
+    + '<label class="upload-zone" id="dropZone">'
+    +   '<svg class="uz-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+    +     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
+    +     '<polyline points="17 8 12 3 7 8"/>'
+    +     '<line x1="12" y1="3" x2="12" y2="15"/>'
+    +   '</svg>'
+    +   '<div class="uz-title">Drop PDFs here</div>'
+    +   '<div class="uz-sub">or tap to choose. Upload one or both at once — type is auto-detected from the report title.</div>'
+    +   '<input type="file" accept="application/pdf" multiple>'
     + '</label>'
     + '<div class="slot-row">'
-    + slotIndicator('All-league',  _ll)
-    + slotIndicator('By-division', _bd)
+    +   slotIndicator('All-league',  _ll)
+    +   slotIndicator('By-division', _bd)
     + '</div>'
     + (sessionMismatch
-        ? '<div class="banner err">⚠ Session mismatch — the two uploads are from different sessions: '
+        ? '<div class="banner err">'
+          + '<svg class="banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+          +   '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>'
+          +   '<line x1="12" y1="9" x2="12" y2="13"/>'
+          +   '<line x1="12" y1="17" x2="12.01" y2="17"/>'
+          + '</svg>'
+          + '<div><strong>Session mismatch</strong> — the two uploads are from different sessions: '
           + '<strong>' + esc(_ll.session_label) + '</strong> (all-league) vs '
           + '<strong>' + esc(_bd.session_label) + '</strong> (by-division). Reconcile is disabled.</div>'
+          + '</div>'
         : '')
-    + '<div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">'
-    + '<button class="btn" id="reconBtn"' + (_ll && _bd && !sessionMismatch ? '' : ' disabled') + '>Reconcile</button>'
-    + '<button class="btn secondary" id="saveBtn"' + (_recon ? '' : ' disabled') + '>Save to Supabase</button>'
-    + '<button class="btn danger" id="clearBtn"' + (_ll || _bd ? '' : ' disabled') + '>Clear</button>'
+    + '<div class="action-bar">'
+    +   '<button class="btn large" id="reconBtn"' + (_ll && _bd && !sessionMismatch ? '' : ' disabled') + '>Reconcile</button>'
+    +   '<button class="btn secondary" id="saveBtn"' + (_recon ? '' : ' disabled') + '>Save to Supabase</button>'
+    +   '<span class="grow"></span>'
+    +   '<button class="btn danger" id="clearBtn"' + (_ll || _bd ? '' : ' disabled') + '>Clear</button>'
     + '</div>'
     + '</div>';
 
@@ -576,15 +617,18 @@ function render() {
 
 function slotIndicator(label, state) {
   const filled = !!state;
+  const icon = filled
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
   const sub = filled
-    ? esc((state.session_label || 'unknown session') + ' — ' + state.rows.length + ' rows'
+    ? esc((state.session_label || 'unknown session') + ' · ' + state.rows.length + ' rows'
         + (state.filename ? ' · ' + state.filename : ''))
-    : '<span style="color:var(--text-dim);font-size:0.85rem;">(not loaded)</span>';
+    : 'Not loaded yet';
   return '<div class="slot' + (filled ? ' filled' : '') + '">'
-    + '<div class="slot-dot"></div>'
+    + '<div class="slot-icon">' + icon + '</div>'
     + '<div class="slot-text">'
-    + '<div class="slot-label">' + esc(label) + '</div>'
-    + '<div class="slot-sub">' + sub + '</div>'
+    +   '<div class="slot-label">' + esc(label) + '</div>'
+    +   '<div class="slot-sub">' + sub + '</div>'
     + '</div></div>';
 }
 
@@ -756,22 +800,44 @@ function toast(msg, kind) {
   _toastTimer = setTimeout(() => t.classList.remove('shown'), 3500);
 }
 
-/* ─── Version auto-update ──────────────────────────────────────────────*/
+/* ─── Version auto-update ──────────────────────────────────────────────
+   Canonical SPM pattern (matches BreakOut / OurRack):
+     1. Poll apa_core.apps every 30s for the registered version.
+     2. On mismatch: show blocking overlay (so user doesn't keep working
+        on stale code) AND start polling THIS app's version.js until the
+        deployed copy reports the new version.
+     3. Only then reload — guarantees the reload returns the new HTML
+        instead of strand-looping on cached old HTML.
+   Per MEMORY: "On mismatch: blocking overlay + poll the deployed HTML
+   for the new APP_VERSION string before reloading." */
+let _versionMismatch = false;
 async function checkVersion() {
+  if (_versionMismatch) return;
   try {
-    const r = await fetch(SB_URL + '/rest/v1/apps?app_name=eq.' + APP_NAME + '&select=version', {
-      headers: HEADERS_APA
-    });
+    const r = await fetch(SB_URL + '/rest/v1/apps?app_name=eq.' + APP_NAME + '&select=version',
+                          { headers: HEADERS_APA });
     if (!r.ok) return;
-    const data = await r.json();
-    if (data && data[0] && data[0].version && data[0].version !== window.APP_VERSION) {
-      const overlay = document.getElementById('updateOverlay');
-      const detail = document.getElementById('versionDetail');
-      detail.textContent = 'Current: ' + window.APP_VERSION + ' → New: ' + data[0].version;
-      overlay.classList.add('shown');
-      setTimeout(() => location.reload(), 2500);
+    const d = await r.json();
+    if (d && d[0] && d[0].version && d[0].version !== window.APP_VERSION) {
+      _versionMismatch = true;
+      document.getElementById('updateOverlay').classList.add('shown');
+      pollForDeploy(d[0].version);
     }
   } catch (_) {}
+}
+function pollForDeploy(target) {
+  setTimeout(async () => {
+    try {
+      const r = await fetch('version.js?_=' + Date.now());
+      if (r.ok && (await r.text()).indexOf("APP_VERSION = '" + target + "'") !== -1) {
+        const u = new URL(location.href);
+        u.searchParams.set('_', String(Date.now()));
+        location.replace(u.toString());
+        return;
+      }
+    } catch (_) {}
+    pollForDeploy(target);
+  }, 3000);
 }
 
 /* ─── Init ─────────────────────────────────────────────────────────────*/
