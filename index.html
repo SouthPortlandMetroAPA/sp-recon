@@ -291,7 +291,10 @@ const HEADERS_APA   = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Ac
 let _ll = null;       // parsed all-league
 let _bd = null;       // parsed by-division
 let _8skunk = null;   // 8-ball skunk events: { session_label, printed_at, events: [...] }
-let _recon = null;    // reconciliation result
+let _recon = null;    // (legacy, unused in v0.8+ — kept for backward-compat with doReconcile)
+let _logSearch  = '';
+let _logSortCol = 'member';   // 'member' | 'team' | 'week' | 'sp'
+let _logSortDir = 'asc';      // 'asc' | 'desc'
 
 /* ─── PDF.js (lazy) ─────────────────────────────────────────────────────*/
 let _pdfjs = null;
@@ -592,89 +595,182 @@ function reconcile(ll, bd) {
    (counted per player+team). Grand Slam is not in the by-division
    report; the all-league report has it but doesn't attribute to a team,
    so it's left out of this v0.1 view. */
-function buildByPersonTeam() {
-  const map = new Map();
-  const k = (m, t) => m + '|' + t;
-  const blank = () => ({
-    rackless: 0, eight_ob: 0, eight_br: 0,
-    nine_os: 0, nine_br: 0, nine_skunk: 0, eight_skunk: 0
-  });
+/* ─── Transaction log (v0.8: replaces reconciliation + by-person view) ─
+   Each row is ONE special-performance earning. APA single-letter codes
+   per MEMORY canonical reference:
+     R = 8-ball Rackless · 8 = 8 OB · x = 8 B&R · 9 = 9 OS · n = 9 B&R
+     s = 8-ball Shutout (from 8-Ball Skunk Report — no APA patch)
+     k = 9-ball Skunk (from by-division "Skunk" column)
+     g = Grand Slam (from all-league only)
+*/
+const BD_FIELD_TO_CODE = {
+  rackless: 'R', eight_ob: '8', eight_br: 'x',
+  nine_os: '9', nine_br: 'n', skunk: 'k'
+};
+const LL_FIELD_TO_CODE = {
+  rackless: 'R', eight_ob: '8', eight_br: 'x',
+  nine_os: '9', nine_br: 'n', skunk: 'k', grand_slam: 'g'
+};
+const SP_CODE_LABEL = {
+  'R': '8-ball Rackless', '8': '8 OB', 'x': '8 B&R',
+  '9': '9 OS', 'n': '9 B&R',
+  's': '8-ball Shutout', 'k': '9-ball Skunk', 'g': 'Grand Slam'
+};
+
+function buildEventLog() {
+  const events = [];
+  // 1) BY-DIVISION rows → explode counts into per-event records.
+  const bdMembers = new Set();
   if (_bd && _bd.rows) {
     for (const r of _bd.rows) {
-      const key = k(r.member_number, r.team_number);
-      if (!map.has(key)) map.set(key, {
-        member_number: r.member_number,
-        member_name:   r.member_name,
-        team_number:   r.team_number,
-        team_name:     '',
-        division_number: r.division_number,
-        division_name:   r.division_name,
-        counts: blank()
-      });
-      const e = map.get(key);
-      e.counts.rackless   += r.rackless   || 0;
-      e.counts.eight_ob   += r.eight_ob   || 0;
-      e.counts.eight_br   += r.eight_br   || 0;
-      e.counts.nine_os    += r.nine_os    || 0;
-      e.counts.nine_br    += r.nine_br    || 0;
-      e.counts.nine_skunk += r.skunk      || 0;   // by-division "Skunk" = 9-ball
+      bdMembers.add(r.member_number);
+      for (const f of Object.keys(BD_FIELD_TO_CODE)) {
+        const n = r[f] || 0;
+        for (let i = 0; i < n; i++) {
+          events.push({
+            member_number: r.member_number,
+            member_name:   r.member_name,
+            team_number:   r.team_number,
+            team_name:     '',
+            division_number: r.division_number,
+            week_no:       null,
+            event_date:    null,
+            sp_code:       BD_FIELD_TO_CODE[f]
+          });
+        }
+      }
     }
   }
+  // 2) 8-BALL SKUNK events (one per event, code 's', date known).
   if (_8skunk && _8skunk.events) {
     for (const ev of _8skunk.events) {
-      const key = k(ev.member_number, ev.team_number);
-      if (!map.has(key)) map.set(key, {
+      events.push({
         member_number: ev.member_number,
         member_name:   ev.member_name,
         team_number:   ev.team_number,
-        team_name:     ev.team_name,
+        team_name:     ev.team_name || '',
         division_number: null,
-        division_name:   null,
-        counts: blank()
+        week_no:       null,                   // future: derive from event_date + session.start_date
+        event_date:    ev.night || null,
+        sp_code:       's'
       });
-      const e = map.get(key);
-      if (!e.team_name && ev.team_name) e.team_name = ev.team_name;
-      if (!e.member_name && ev.member_name) e.member_name = ev.member_name;
-      e.counts.eight_skunk += 1;
     }
   }
-  const rows = [...map.values()];
-  rows.sort((a, b) =>
-    a.member_number.localeCompare(b.member_number) ||
-    a.team_number.localeCompare(b.team_number));
-  return rows;
+  // 3) ALL-LEAGUE members not in BD at all → use LL counts as a fallback
+  //    with team_number = null (we don't have team attribution).
+  if (_ll && _ll.rows) {
+    for (const r of _ll.rows) {
+      if (bdMembers.has(r.member_number)) {
+        // BD has team-attributed events for this member — use those.
+        // But still emit Grand Slam (no BD equivalent) from LL.
+        const gs = r.grand_slam || 0;
+        for (let i = 0; i < gs; i++) {
+          events.push({
+            member_number: r.member_number,
+            member_name:   r.member_name,
+            team_number:   null,
+            team_name:     '',
+            division_number: null,
+            week_no:       null,
+            event_date:    null,
+            sp_code:       'g'
+          });
+        }
+        continue;
+      }
+      // Member only in LL — explode all categories with no team info.
+      for (const f of Object.keys(LL_FIELD_TO_CODE)) {
+        const n = r[f] || 0;
+        for (let i = 0; i < n; i++) {
+          events.push({
+            member_number: r.member_number,
+            member_name:   r.member_name,
+            team_number:   null,
+            team_name:     '',
+            division_number: null,
+            week_no:       null,
+            event_date:    null,
+            sp_code:       LL_FIELD_TO_CODE[f]
+          });
+        }
+      }
+    }
+  }
+  return events;
 }
 
-function renderByPersonTeam(rows) {
-  if (rows.length === 0) {
-    return '<div class="empty">No data yet.</div>';
+function filterAndSortEvents(events) {
+  // Search: case-insensitive substring across visible columns.
+  let out = events;
+  const q = (_logSearch || '').trim().toLowerCase();
+  if (q) {
+    out = out.filter(e =>
+      (e.member_number || '').toLowerCase().includes(q) ||
+      (e.member_name   || '').toLowerCase().includes(q) ||
+      (e.team_number   || '').toLowerCase().includes(q) ||
+      (e.team_name     || '').toLowerCase().includes(q) ||
+      String(e.week_no || '').toLowerCase().includes(q) ||
+      (e.event_date    || '').toLowerCase().includes(q) ||
+      (e.sp_code       || '').toLowerCase().includes(q));
   }
+  // Sort.
+  const dir = _logSortDir === 'desc' ? -1 : 1;
+  out = out.slice().sort((a, b) => {
+    let av, bv;
+    switch (_logSortCol) {
+      case 'member': av = a.member_number || '~'; bv = b.member_number || '~'; break;
+      case 'team':   av = a.team_number   || '~'; bv = b.team_number   || '~'; break;
+      case 'week':   av = a.week_no == null ? Infinity : a.week_no;
+                     bv = b.week_no == null ? Infinity : b.week_no; break;
+      case 'sp':     av = a.sp_code || '~'; bv = b.sp_code || '~'; break;
+      default:       av = ''; bv = '';
+    }
+    if (av < bv) return -1 * dir;
+    if (av > bv) return  1 * dir;
+    // Stable secondary by member_number then sp_code.
+    return (a.member_number || '').localeCompare(b.member_number || '')
+        || (a.sp_code || '').localeCompare(b.sp_code || '');
+  });
+  return out;
+}
+
+function renderEventLog(events) {
+  if (events.length === 0) {
+    return '<div class="empty">No events match.</div>';
+  }
+  const arrow = col => _logSortCol === col
+    ? (_logSortDir === 'asc' ? ' ▲' : ' ▼')
+    : '';
   const head =
     '<thead><tr>'
-    + '<th>Member</th><th>Team</th>'
-    + '<th class="n">Rack</th>'
-    + '<th class="n">8 OB</th><th class="n">8 B&R</th>'
-    + '<th class="n">9 OS</th><th class="n">9 B&R</th>'
-    + '<th class="n">9 Sk</th><th class="n">8 Sk</th>'
-    + '<th class="n">Σ</th>'
+    +   '<th data-sort="member" style="cursor:pointer;">Player' + arrow('member') + '</th>'
+    +   '<th data-sort="team"   style="cursor:pointer;">Team'   + arrow('team')   + '</th>'
+    +   '<th data-sort="week"   style="cursor:pointer;">Week'   + arrow('week')   + '</th>'
+    +   '<th data-sort="sp"     style="cursor:pointer;">SP'     + arrow('sp')     + '</th>'
     + '</tr></thead>';
-  const body = rows.map(r => {
-    const c = r.counts;
-    const total = c.rackless + c.eight_ob + c.eight_br + c.nine_os + c.nine_br + c.nine_skunk + c.eight_skunk;
-    const cell = v => '<td class="n">' + (v || '<span style="color:var(--text-dim)">·</span>') + '</td>';
-    const teamCell = '<strong>' + esc(r.team_number) + '</strong>'
-                   + (r.team_name ? '<br><span style="color:var(--text-dim);font-size:0.82rem;">' + esc(r.team_name) + '</span>' : '')
-                   + (r.division_number ? '<br><span style="color:var(--text-dim);font-size:0.78rem;">div ' + esc(r.division_number) + '</span>' : '');
+  return '<div style="overflow-x:auto"><table id="eventLogTable">' + head
+    + '<tbody>' + renderEventRows(events) + '</tbody></table></div>';
+}
+
+function renderEventRows(events) {
+  return events.map(e => {
+    const teamCell = e.team_number
+      ? '<strong>' + esc(e.team_number) + '</strong>'
+        + (e.team_name ? '<br><span style="color:var(--text-dim);font-size:0.82rem;">' + esc(e.team_name) + '</span>' : '')
+      : '<span style="color:var(--text-dim)">—</span>';
+    const weekCell = e.week_no != null
+      ? '<strong>' + e.week_no + '</strong>'
+      : (e.event_date ? '<span style="color:var(--text-dim);font-size:0.82rem;">' + esc(e.event_date) + '</span>'
+                      : '<span style="color:var(--text-dim)">—</span>');
+    const codeLabel = SP_CODE_LABEL[e.sp_code] || '';
     return '<tr>'
-      + '<td><strong>' + esc(r.member_number) + '</strong><br>' + esc(r.member_name) + '</td>'
+      + '<td><strong>' + esc(e.member_number) + '</strong> ' + esc(e.member_name) + '</td>'
       + '<td>' + teamCell + '</td>'
-      + cell(c.rackless) + cell(c.eight_ob) + cell(c.eight_br)
-      + cell(c.nine_os) + cell(c.nine_br)
-      + cell(c.nine_skunk) + cell(c.eight_skunk)
-      + '<td class="n"><strong>' + total + '</strong></td>'
+      + '<td>' + weekCell + '</td>'
+      + '<td><code style="font-weight:800; font-size:0.95rem;">' + esc(e.sp_code) + '</code>'
+      +   ' <span style="color:var(--text-dim); font-size:0.78rem;">' + esc(codeLabel) + '</span></td>'
       + '</tr>';
   }).join('');
-  return '<div style="overflow-x:auto"><table>' + head + '<tbody>' + body + '</tbody></table></div>';
 }
 
 /* ─── Render ───────────────────────────────────────────────────────────*/
@@ -732,52 +828,61 @@ function render() {
           + '</div>'
         : '')
     + '<div class="action-bar">'
-    +   '<button class="btn large" id="reconBtn"' + (_ll && _bd && !sessionMismatch ? '' : ' disabled') + '>Reconcile</button>'
-    +   '<button class="btn secondary" id="saveBtn"' + (_recon ? '' : ' disabled') + '>Save to Supabase</button>'
+    +   '<button class="btn secondary" id="saveBtn" disabled title="Save to Supabase (v0.9)">Save to Supabase</button>'
     +   '<span class="grow"></span>'
-    +   '<button class="btn danger" id="clearBtn"' + (_ll || _bd ? '' : ' disabled') + '>Clear</button>'
+    +   '<button class="btn danger" id="clearBtn"' + (_ll || _bd || _8skunk ? '' : ' disabled') + '>Clear</button>'
     + '</div>'
     + '</div>';
 
-  // Reconciliation result.
-  if (_recon) {
-    const counts = countByKind(_recon);
+  // ─── Transaction log ─────────────────────────────────────────────────
+  // Replaces the v0.7 reconciliation + by-person-by-team views per user
+  // direction 2026-05-16: "becomes a transaction log of special performance."
+  if (_bd || _ll || _8skunk) {
+    const events = buildEventLog();
+    const filtered = filterAndSortEvents(events);
     html += '<div class="card">'
-      + '<h2>Reconciliation</h2>'
-      + '<div class="summary-grid">'
-      + sgcell('Matched', counts.MATCH || 0, 'ok')
-      + sgcell('Discrepancies', (_recon.length - (counts.MATCH || 0) - (counts.GS_ONLY || 0)), 'bad')
-      + sgcell('Grand-slam only', counts.GS_ONLY || 0, '')
-      + sgcell('Total members', _recon.length, '')
+      + '<h2>Transaction log <span style="font-weight:500; color:var(--text-dim); font-size:0.86rem;">'
+      +   '· ' + filtered.length + (filtered.length === events.length ? '' : ' of ' + events.length) + ' events'
+      + '</span></h2>'
+      + '<div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">'
+      +   '<input type="text" id="logSearch" placeholder="Search (member, name, team, week, SP code)…"'
+      +     ' value="' + esc(_logSearch) + '"'
+      +     ' style="flex:1; min-width:200px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:0.92rem; background:#fff;">'
+      +   '<div style="font-size:0.78rem; color:var(--text-dim);">'
+      +     'Codes: <code>R</code>=Rackless · <code>8</code>=8 OB · <code>x</code>=8 B&R · <code>9</code>=9 OS · <code>n</code>=9 B&R · <code>s</code>=8-ball Shutout · <code>k</code>=9-ball Skunk · <code>g</code>=Grand Slam'
+      +   '</div>'
       + '</div>'
-      + renderTable(_recon)
-      + '</div>';
-  }
-
-  // By-person-by-team view (shown when by-division is loaded — adds 8-ball
-  // skunk counts when that report is also loaded).
-  if (_bd) {
-    const ppt = buildByPersonTeam();
-    html += '<div class="card">'
-      + '<h2>All SPs by person by team'
-      +   (_8skunk
-            ? ' <span class="tag info" style="font-size:0.66rem;vertical-align:middle;">incl. 8-ball skunks</span>'
-            : ' <span class="tag warn" style="font-size:0.66rem;vertical-align:middle;">no 8-ball skunks loaded</span>')
-      + '</h2>'
-      + '<div style="font-size:0.85rem; color:var(--text-dim); margin-bottom:8px;">'
-      +   ppt.length + ' (player, team) rows. "9 Sk" comes from the by-division Skunk column. '
-      +   (_8skunk ? '"8 Sk" comes from the 8-Ball Skunk Report (counted per player+team).'
-                   : 'Load the 8-Ball Skunk Report to populate the "8 Sk" column.')
-      + '</div>'
-      + renderByPersonTeam(ppt)
+      + renderEventLog(filtered)
       + '</div>';
   }
 
   main.innerHTML = html;
   wireUploadZones();
-  document.getElementById('reconBtn').addEventListener('click', doReconcile);
   document.getElementById('saveBtn').addEventListener('click', doSave);
   document.getElementById('clearBtn').addEventListener('click', doClear);
+  // Re-wire search input + sortable headers.
+  const search = document.getElementById('logSearch');
+  if (search) {
+    search.addEventListener('input', e => {
+      _logSearch = e.target.value;
+      const tbody = document.querySelector('#eventLogTable tbody');
+      if (tbody) tbody.innerHTML = renderEventRows(filterAndSortEvents(buildEventLog()));
+      const head = document.querySelector('h2 > span');
+      if (head) {
+        const total = buildEventLog().length;
+        const cur = filterAndSortEvents(buildEventLog()).length;
+        head.textContent = '· ' + cur + (cur === total ? '' : ' of ' + total) + ' events';
+      }
+    });
+  }
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      if (_logSortCol === col) _logSortDir = _logSortDir === 'asc' ? 'desc' : 'asc';
+      else { _logSortCol = col; _logSortDir = 'asc'; }
+      render();
+    });
+  });
 }
 
 function slotIndicator(label, state) {
@@ -872,12 +977,6 @@ async function handleFile(_droppedKind, file) {
   } catch (e) {
     toast('Parse failed: ' + e.message, true);
   }
-}
-
-function doReconcile() {
-  if (!_ll || !_bd) return;
-  _recon = reconcile(_ll, _bd);
-  render();
 }
 
 function doClear() {
