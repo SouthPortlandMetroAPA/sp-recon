@@ -267,46 +267,74 @@ async function pdfPageLines(file) {
   return pages;
 }
 
-/* ─── Parser: All-league ───────────────────────────────────────────────
-   Each data line shape:
-     <5-digit member#> <member name (with spaces)> <6 ints> [<grand-slam int>]
-   The 6 trailing ints are always present; grand_slam is sometimes missing
-   (treat as 0). Right-parse to handle name-with-spaces.
-*/
-function parseAllLeague(pages) {
-  const all = pages.flat();
-  const rows = [];
+/* ─── Shared line helpers ────────────────────────────────────────────────
+   PDF.js groups text into runs by Y-coordinate. The all-league and by-
+   division reports both put the member# + name (and team# for by-div) on
+   one line, and the 6 count integers on the NEXT line. So we pair line
+   i (the "header" line) with the first subsequent line that's all-ints. */
+const INT_ROW_RE = /^\d+(?:\s+\d+){5}$/;   // exactly 6 integers, space-separated
+
+function findIntsAfter(lines, i) {
+  // Look ahead a few lines for the int row associated with the header at i.
+  // Skip blank lines and page-footer noise. Don't skip past another header.
+  for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+    const ln = lines[j];
+    if (!ln) continue;
+    if (INT_ROW_RE.test(ln)) {
+      return { ints: ln.trim().split(/\s+/).map(s => parseInt(s, 10)), at: j };
+    }
+    // If we hit another member#-line or a division header before finding
+    // the ints, bail — the row is malformed or the int line was lost.
+    if (/^\d{5}\b/.test(ln)) return null;
+    if (/^\d{1,3}\s*-\s*\S/.test(ln)) return null;
+  }
+  return null;
+}
+
+function extractMeta(lines) {
   let session_label = null, printed_at = null;
-  for (const line of all) {
+  for (const ln of lines) {
     if (!session_label) {
-      const m = line.match(/^(Summer|Spring|Fall|Winter)\s+\d{4}$/i);
-      if (m) session_label = line;
+      const m = ln.match(/^(Summer|Spring|Fall|Winter)\s+\d{4}$/i);
+      if (m) session_label = ln;
     }
     if (!printed_at) {
-      const m = line.match(/Printed\s+(\d+\/\d+\/\d+)\s*\/\s*(\d+:\d+:\d+\s*[AP]M)/i);
+      const m = ln.match(/Printed\s+(\d+\/\d+\/\d+)\s*\/\s*(\d+:\d+:\d+\s*[AP]M)/i);
       if (m) printed_at = m[1] + ' ' + m[2];
     }
-    // Match data rows: starts with 5-digit member number.
-    const m = line.match(/^(\d{5})\s+(.+)$/);
+    if (session_label && printed_at) break;
+  }
+  return { session_label, printed_at };
+}
+
+/* ─── Parser: All-league ───────────────────────────────────────────────
+   Line A: "<5-digit member#> <member name (with spaces)>"
+   Line B: "<6 ints>"   columns: Rackless, 8 OB, 8 B&R, 9 OS, 9 B&R, Skunk
+   The "Grand Slam" column header appears in the PDF but is empty for the
+   entire session in the data we've seen — so grand_slam is always 0 in
+   this parser. */
+function parseAllLeague(pages) {
+  const lines = pages.flat();
+  const { session_label, printed_at } = extractMeta(lines);
+  const rows = [];
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    // Member-header line: starts with 5-digit number.
+    const m = ln.match(/^(\d{5})\s+(.+?)\s*$/);
     if (!m) continue;
     const member_number = m[1];
-    const rest = m[2];
-    // Pull trailing integers — 6 or 7 of them.
-    const tail = rest.match(/^(.+?)((?:\s+\d+){6,7})\s*$/);
-    if (!tail) continue;
-    const name = tail[1].trim();
-    const ints = tail[2].trim().split(/\s+/).map(s => parseInt(s, 10));
-    let rackless, eight_ob, eight_br, nine_os, nine_br, skunk, grand_slam;
-    if (ints.length === 7) {
-      [rackless, eight_ob, eight_br, nine_os, nine_br, skunk, grand_slam] = ints;
-    } else {
-      [rackless, eight_ob, eight_br, nine_os, nine_br, skunk] = ints;
-      grand_slam = 0;
-    }
-    rows.push({ member_number, member_name: name,
-                rackless, eight_ob, eight_br, nine_os, nine_br, skunk, grand_slam });
+    const member_name = m[2].trim();
+    // Skip false positives: header-text or division names. A real data
+    // header is followed within a few lines by an INT_ROW.
+    const found = findIntsAfter(lines, i);
+    if (!found) continue;
+    const [rackless, eight_ob, eight_br, nine_os, nine_br, skunk] = found.ints;
+    rows.push({ member_number, member_name,
+                rackless, eight_ob, eight_br, nine_os, nine_br, skunk,
+                grand_slam: 0 });
+    i = found.at;  // advance past the int line so it isn't re-matched
   }
-  // Dedup by member_number (multi-page repeats).
+  // Dedup by member_number (multi-page repeats — unlikely but defensive).
   const byMem = new Map();
   for (const r of rows) {
     if (!byMem.has(r.member_number)) byMem.set(r.member_number, r);
@@ -315,52 +343,44 @@ function parseAllLeague(pages) {
 }
 
 /* ─── Parser: By-division ──────────────────────────────────────────────
-   Two kinds of lines:
+   Three line kinds:
    - Division header:  "005 - No-Po"  (1-3 digit number, dash, name)
-   - Data row:         "<member#> <member name> <6 ints> <team#>"
-                        team# = 5-digit string at end
+   - Member-header:    "<5-digit member#> <name> <5-digit team#>"
+   - Ints:             "<6 ints>"   columns: RN, 8OB, 8B&R, 9OS, 9B&R, Skunk
 */
 function parseByDivision(pages) {
-  const all = pages.flat();
+  const lines = pages.flat();
+  const { session_label, printed_at } = extractMeta(lines);
   const rows = [];
-  let session_label = null, printed_at = null;
   let cur_div_num = null, cur_div_name = null;
-  for (const line of all) {
-    if (!session_label) {
-      const m = line.match(/^(Summer|Spring|Fall|Winter)\s+\d{4}$/i);
-      if (m) session_label = line;
-    }
-    if (!printed_at) {
-      const m = line.match(/Printed\s+(\d+\/\d+\/\d+)\s*\/\s*(\d+:\d+:\d+\s*[AP]M)/i);
-      if (m) printed_at = m[1] + ' ' + m[2];
-    }
-    // Division header — 1 to 3 leading digits.
-    const dh = line.match(/^(\d{1,3})\s*-\s*(.+)$/);
-    if (dh && !/^\d{5}\s/.test(line)) {
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    // Division header (e.g. "005 - No-Po") — must NOT also be a member# line.
+    const dh = ln.match(/^(\d{1,3})\s*-\s*(.+?)\s*$/);
+    if (dh && !/^\d{5}\b/.test(ln)) {
       cur_div_num = dh[1].padStart(3, '0');
       cur_div_name = dh[2].trim();
       continue;
     }
     if (!cur_div_num) continue;
-    // Data row.
-    const m = line.match(/^(\d{5})\s+(.+)$/);
+    // Member-header line: "<member#> <name> <team#>" — team# is the
+    // trailing 5-digit number; everything between is the name.
+    const m = ln.match(/^(\d{5})\s+(.+?)\s+(\d{5})\s*$/);
     if (!m) continue;
     const member_number = m[1];
-    const rest = m[2];
-    // Right-parse: 6 ints then a 5-digit team number.
-    const tail = rest.match(/^(.+?)((?:\s+\d+){6})\s+(\d{5})\s*$/);
-    if (!tail) continue;
-    const name = tail[1].trim();
-    const ints = tail[2].trim().split(/\s+/).map(s => parseInt(s, 10));
-    const [rackless, eight_ob, eight_br, nine_os, nine_br, skunk] = ints;
-    const team_number = tail[3];
+    const member_name = m[2].trim();
+    const team_number = m[3];
+    const found = findIntsAfter(lines, i);
+    if (!found) continue;
+    const [rackless, eight_ob, eight_br, nine_os, nine_br, skunk] = found.ints;
     rows.push({
       division_number: cur_div_num,
       division_name: cur_div_name,
       team_number,
-      member_number, member_name: name,
+      member_number, member_name,
       rackless, eight_ob, eight_br, nine_os, nine_br, skunk
     });
+    i = found.at;
   }
   return { session_label, printed_at, rows };
 }
