@@ -82,10 +82,13 @@
 
   /* ─── Slot indicators (file status) ────────────────────────────────*/
   .slot-row {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
     margin-top: 14px;
   }
-  @media (max-width: 600px) {
+  @media (max-width: 800px) {
+    .slot-row { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 480px) {
     .slot-row { grid-template-columns: 1fr; }
   }
   .slot {
@@ -282,9 +285,10 @@ const HEADERS_WRITE = HAS_KEY
 const HEADERS_APA   = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': 'apa_core' };
 
 /* ─── State ─────────────────────────────────────────────────────────────*/
-let _ll = null;   // parsed all-league: { session_label, printed_at, rows: [{member_number, member_name, rackless, ...}] }
-let _bd = null;   // parsed by-division: { session_label, printed_at, rows: [{division_number, division_name, team_number, member_number, ...}] }
-let _recon = null; // reconciliation result
+let _ll = null;       // parsed all-league
+let _bd = null;       // parsed by-division
+let _8skunk = null;   // 8-ball skunk events: { session_label, printed_at, events: [...] }
+let _recon = null;    // reconciliation result
 
 /* ─── PDF.js (lazy) ─────────────────────────────────────────────────────*/
 let _pdfjs = null;
@@ -333,12 +337,14 @@ const INT_ROW_RE = /^\d+(?:\s+\d+){5}$/;   // exactly 6 integers, space-separate
 
 /* Detect the PDF type from its content (not its filename — users have
    files like "spring_all_xdiv.pdf" that are actually all-league). Returns
-   'll', 'bd', or 'unknown'. Strategy: title text wins, with division-
-   header presence as a fallback signal. */
+   'll', 'bd', '8skunk', '9skunk', or 'unknown'. Strategy: title text wins,
+   with section-pattern fallbacks. */
 function detectKind(pages) {
   const lines = pages.flat();
-  // Title-based detection (most reliable).
+  // Title-based detection (most reliable). Check most-specific first.
   for (const ln of lines.slice(0, 20)) {
+    if (/8-Ball.*Skunk.*Report/i.test(ln)) return '8skunk';
+    if (/9-Ball.*Skunk.*Report/i.test(ln)) return '9skunk';
     if (/End Of Session Award Summary By Division/i.test(ln)) return 'bd';
   }
   for (const ln of lines.slice(0, 20)) {
@@ -462,6 +468,51 @@ function parseByDivision(pages) {
   return { session_label, printed_at, rows };
 }
 
+/* ─── Parser: 8-Ball Skunk Report ──────────────────────────────────────
+   Per-event log (one row per skunk). PDF.js groups by Y so each event is
+   TWO consecutive lines:
+     A: "<5-digit member#>"
+     B: "<name> On Team <5-digit team#> - <team name>"
+   Sectioned by "Night of Play: MM/DD/YYYY" headers. The header line has
+   "Play Dates From X To Y" we use as the synthetic session_label. */
+const SKUNK_TEAM_LINE_RE = /^(.+?)\s+On Team\s+(\d{5})\s+-\s+(.+)$/i;
+
+function parseSkunks(pages, ballType) {
+  const lines = pages.flat();
+  let session_label = null, printed_at = null, curNight = null;
+  const events = [];
+  for (const ln of lines.slice(0, 20)) {
+    const m = ln.match(/Play Dates From\s+(\d+\/\d+\/\d{4})\s+To\s+(\d+\/\d+\/\d{4})/i);
+    if (m) { session_label = m[1] + ' – ' + m[2]; break; }
+  }
+  for (const ln of lines) {
+    if (printed_at) break;
+    const m = ln.match(/Printed\s+(\d+\/\d+\/\d+)\s*\/?\s*(\d+:\d+:\d+\s*[AP]M)?/i);
+    if (m) printed_at = (m[1] || '') + (m[2] ? ' ' + m[2] : '');
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    const nm = ln.match(/^Night of Play:\s+(\d+\/\d+\/\d{4})/i);
+    if (nm) { curNight = nm[1]; continue; }
+    if (!/^\d{5}$/.test(ln)) continue;
+    const member_number = ln;
+    const next = lines[i + 1];
+    if (!next) continue;
+    const tm = next.match(SKUNK_TEAM_LINE_RE);
+    if (!tm) continue;
+    events.push({
+      member_number,
+      member_name: tm[1].trim(),
+      team_number: tm[2],
+      team_name: tm[3].trim(),
+      night: curNight,
+      ball_type: ballType   // '8' or '9'
+    });
+    i++; // consume the team line
+  }
+  return { session_label, printed_at, events };
+}
+
 /* ─── Reconciliation ───────────────────────────────────────────────────*/
 const CATS = ['rackless','eight_ob','eight_br','nine_os','nine_br','skunk'];
 const CAT_LABELS = { rackless:'Rackless', eight_ob:'8 OB', eight_br:'8 B&R',
@@ -532,6 +583,97 @@ function reconcile(ll, bd) {
   return results;
 }
 
+/* ─── By-person-by-team aggregation ───────────────────────────────────
+   Merges by-division rows (which already give us per-team counts for
+   Rackless, 8 OB, 8 B&R, 9 OS, 9 B&R, 9-Skunk) with 8-ball skunk events
+   (counted per player+team). Grand Slam is not in the by-division
+   report; the all-league report has it but doesn't attribute to a team,
+   so it's left out of this v0.1 view. */
+function buildByPersonTeam() {
+  const map = new Map();
+  const k = (m, t) => m + '|' + t;
+  const blank = () => ({
+    rackless: 0, eight_ob: 0, eight_br: 0,
+    nine_os: 0, nine_br: 0, nine_skunk: 0, eight_skunk: 0
+  });
+  if (_bd && _bd.rows) {
+    for (const r of _bd.rows) {
+      const key = k(r.member_number, r.team_number);
+      if (!map.has(key)) map.set(key, {
+        member_number: r.member_number,
+        member_name:   r.member_name,
+        team_number:   r.team_number,
+        team_name:     '',
+        division_number: r.division_number,
+        division_name:   r.division_name,
+        counts: blank()
+      });
+      const e = map.get(key);
+      e.counts.rackless   += r.rackless   || 0;
+      e.counts.eight_ob   += r.eight_ob   || 0;
+      e.counts.eight_br   += r.eight_br   || 0;
+      e.counts.nine_os    += r.nine_os    || 0;
+      e.counts.nine_br    += r.nine_br    || 0;
+      e.counts.nine_skunk += r.skunk      || 0;   // by-division "Skunk" = 9-ball
+    }
+  }
+  if (_8skunk && _8skunk.events) {
+    for (const ev of _8skunk.events) {
+      const key = k(ev.member_number, ev.team_number);
+      if (!map.has(key)) map.set(key, {
+        member_number: ev.member_number,
+        member_name:   ev.member_name,
+        team_number:   ev.team_number,
+        team_name:     ev.team_name,
+        division_number: null,
+        division_name:   null,
+        counts: blank()
+      });
+      const e = map.get(key);
+      if (!e.team_name && ev.team_name) e.team_name = ev.team_name;
+      if (!e.member_name && ev.member_name) e.member_name = ev.member_name;
+      e.counts.eight_skunk += 1;
+    }
+  }
+  const rows = [...map.values()];
+  rows.sort((a, b) =>
+    a.member_number.localeCompare(b.member_number) ||
+    a.team_number.localeCompare(b.team_number));
+  return rows;
+}
+
+function renderByPersonTeam(rows) {
+  if (rows.length === 0) {
+    return '<div class="empty">No data yet.</div>';
+  }
+  const head =
+    '<thead><tr>'
+    + '<th>Member</th><th>Team</th>'
+    + '<th class="n">Rack</th>'
+    + '<th class="n">8 OB</th><th class="n">8 B&R</th>'
+    + '<th class="n">9 OS</th><th class="n">9 B&R</th>'
+    + '<th class="n">9 Sk</th><th class="n">8 Sk</th>'
+    + '<th class="n">Σ</th>'
+    + '</tr></thead>';
+  const body = rows.map(r => {
+    const c = r.counts;
+    const total = c.rackless + c.eight_ob + c.eight_br + c.nine_os + c.nine_br + c.nine_skunk + c.eight_skunk;
+    const cell = v => '<td class="n">' + (v || '<span style="color:var(--text-dim)">·</span>') + '</td>';
+    const teamCell = '<strong>' + esc(r.team_number) + '</strong>'
+                   + (r.team_name ? '<br><span style="color:var(--text-dim);font-size:0.82rem;">' + esc(r.team_name) + '</span>' : '')
+                   + (r.division_number ? '<br><span style="color:var(--text-dim);font-size:0.78rem;">div ' + esc(r.division_number) + '</span>' : '');
+    return '<tr>'
+      + '<td><strong>' + esc(r.member_number) + '</strong><br>' + esc(r.member_name) + '</td>'
+      + '<td>' + teamCell + '</td>'
+      + cell(c.rackless) + cell(c.eight_ob) + cell(c.eight_br)
+      + cell(c.nine_os) + cell(c.nine_br)
+      + cell(c.nine_skunk) + cell(c.eight_skunk)
+      + '<td class="n"><strong>' + total + '</strong></td>'
+      + '</tr>';
+  }).join('');
+  return '<div style="overflow-x:auto"><table>' + head + '<tbody>' + body + '</tbody></table></div>';
+}
+
 /* ─── Render ───────────────────────────────────────────────────────────*/
 function esc(s) {
   return String(s == null ? '' : s)
@@ -572,6 +714,7 @@ function render() {
     + '<div class="slot-row">'
     +   slotIndicator('All-league',  _ll)
     +   slotIndicator('By-division', _bd)
+    +   slotIndicator('8-Ball Skunks', _8skunk)
     + '</div>'
     + (sessionMismatch
         ? '<div class="banner err">'
@@ -608,6 +751,25 @@ function render() {
       + '</div>';
   }
 
+  // By-person-by-team view (shown when by-division is loaded — adds 8-ball
+  // skunk counts when that report is also loaded).
+  if (_bd) {
+    const ppt = buildByPersonTeam();
+    html += '<div class="card">'
+      + '<h2>All SPs by person by team'
+      +   (_8skunk
+            ? ' <span class="tag info" style="font-size:0.66rem;vertical-align:middle;">incl. 8-ball skunks</span>'
+            : ' <span class="tag warn" style="font-size:0.66rem;vertical-align:middle;">no 8-ball skunks loaded</span>')
+      + '</h2>'
+      + '<div style="font-size:0.85rem; color:var(--text-dim); margin-bottom:8px;">'
+      +   ppt.length + ' (player, team) rows. "9 Sk" comes from the by-division Skunk column. '
+      +   (_8skunk ? '"8 Sk" comes from the 8-Ball Skunk Report (counted per player+team).'
+                   : 'Load the 8-Ball Skunk Report to populate the "8 Sk" column.')
+      + '</div>'
+      + renderByPersonTeam(ppt)
+      + '</div>';
+  }
+
   main.innerHTML = html;
   wireUploadZones();
   document.getElementById('reconBtn').addEventListener('click', doReconcile);
@@ -620,10 +782,16 @@ function slotIndicator(label, state) {
   const icon = filled
     ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
-  const sub = filled
-    ? esc((state.session_label || 'unknown session') + ' · ' + state.rows.length + ' rows'
-        + (state.filename ? ' · ' + state.filename : ''))
-    : 'Not loaded yet';
+  let sub;
+  if (filled) {
+    // Different report shapes have different payload arrays.
+    const payload = state.rows || state.events || [];
+    const noun = state.events ? 'events' : 'rows';
+    sub = esc((state.session_label || 'unknown session') + ' · ' + payload.length + ' ' + noun
+            + (state.filename ? ' · ' + state.filename : ''));
+  } else {
+    sub = 'Not loaded yet';
+  }
   return '<div class="slot' + (filled ? ' filled' : '') + '">'
     + '<div class="slot-icon">' + icon + '</div>'
     + '<div class="slot-text">'
@@ -657,7 +825,9 @@ function wireUploadZones() {
   });
 }
 
-async function handleFile(droppedKind, file) {
+const SLOT_LABEL = { ll: 'All-league', bd: 'By-division', '8skunk': '8-Ball Skunks', '9skunk': '9-Ball Skunks' };
+
+async function handleFile(_droppedKind, file) {
   if (!file || file.type !== 'application/pdf') {
     toast('Only PDF files are accepted', true);
     return;
@@ -665,32 +835,34 @@ async function handleFile(droppedKind, file) {
   try {
     toast('Parsing ' + file.name + '…');
     const pages = await pdfPageLines(file);
-    // Auto-detect from PDF content. Filenames lie ('spring_all_xdiv.pdf'
-    // can actually be an all-league report). Route to whichever parser the
-    // PDF's title text says it is, regardless of which zone was dropped on.
+    // Auto-detect from PDF content. Filenames lie — route by content only.
     const detected = detectKind(pages);
     if (detected === 'unknown') {
-      throw new Error('Could not identify report type — title text didn’t match either format');
+      throw new Error('Could not identify report type — title text didn’t match any known format');
     }
-    const slot = detected;  // 'll' or 'bd'
-    let parsed;
-    if (slot === 'll') {
+    let parsed, payloadCount;
+    if (detected === 'll') {
       parsed = parseAllLeague(pages);
-    } else {
+      payloadCount = parsed.rows.length;
+    } else if (detected === 'bd') {
       parsed = parseByDivision(pages);
+      payloadCount = parsed.rows.length;
+    } else if (detected === '8skunk') {
+      parsed = parseSkunks(pages, '8');
+      payloadCount = parsed.events.length;
+    } else if (detected === '9skunk') {
+      throw new Error('9-Ball Skunk report support is not implemented yet (v0.2)');
     }
     parsed.filename = file.name;
-    if (parsed.rows.length === 0) {
-      throw new Error('Identified as ' + (slot === 'll' ? 'all-league' : 'by-division') + ' but no data rows extracted');
+    if (payloadCount === 0) {
+      throw new Error('Identified as ' + SLOT_LABEL[detected] + ' but no rows extracted');
     }
-    if (slot === 'll') _ll = parsed; else _bd = parsed;
+    if (detected === 'll')      _ll = parsed;
+    else if (detected === 'bd') _bd = parsed;
+    else if (detected === '8skunk') _8skunk = parsed;
     _recon = null;  // any new upload invalidates reconciliation
     render();
-    const niceSlot = slot === 'll' ? 'All-league' : 'By-division';
-    toast(niceSlot + ' loaded: ' + parsed.rows.length + ' rows · ' + (parsed.session_label || 'unknown session'),
-          'ok');
-    // Surface session mismatch as a separate, more attention-grabbing toast
-    // (the banner in the UI is the persistent indicator).
+    toast(SLOT_LABEL[detected] + ' loaded: ' + payloadCount + ' rows · ' + (parsed.session_label || 'unknown session'), 'ok');
     if (_ll && _bd && _ll.session_label && _bd.session_label && _ll.session_label !== _bd.session_label) {
       toast('⚠ Session mismatch: "' + _ll.session_label + '" vs "' + _bd.session_label + '"', true);
     }
@@ -707,7 +879,7 @@ function doReconcile() {
 
 function doClear() {
   if (!confirm('Clear all loaded data?')) return;
-  _ll = _bd = _recon = null;
+  _ll = _bd = _8skunk = _recon = null;
   render();
 }
 
