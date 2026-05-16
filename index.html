@@ -87,6 +87,34 @@
   @media (max-width: 600px) {
     .upload-grid { grid-template-columns: 1fr; }
   }
+  .slot-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    margin-top: 10px;
+  }
+  @media (max-width: 600px) {
+    .slot-row { grid-template-columns: 1fr; }
+  }
+  .slot {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: #fafbfc;
+  }
+  .slot.filled { background: #f0fdf4; border-color: var(--ok); }
+  .slot-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #d1d5db; flex: 0 0 auto;
+  }
+  .slot.filled .slot-dot { background: var(--ok); }
+  .slot-label { font-weight: 800; font-size: 0.88rem; }
+  .slot-sub { font-size: 0.78rem; color: var(--text-dim); margin-top: 2px; }
+  .banner {
+    margin-top: 12px; padding: 10px 12px;
+    border-radius: 8px; font-size: 0.9rem;
+  }
+  .banner.err {
+    background: #fef2f2; color: #7f1d1d; border: 1px solid #fecaca;
+  }
 
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
@@ -165,6 +193,7 @@
   }
   .toast.shown { opacity: 1; }
   .toast.err { background: var(--bad); }
+  .toast.ok  { background: var(--ok); }
 </style>
 </head>
 <body>
@@ -495,15 +524,29 @@ function render() {
 
   let html = '';
 
-  // Upload card.
+  // Session-mismatch banner (if both loaded but sessions differ).
+  const sessionMismatch = (_ll && _bd && _ll.session_label && _bd.session_label
+                           && _ll.session_label !== _bd.session_label);
+
+  // Upload card — single drop zone, auto-detect type, two slot indicators.
   html += '<div class="card">'
     + '<h2>Upload session reports</h2>'
-    + '<div class="upload-grid">'
-    + uploadZone('ll', 'All-league report', _ll, _ll ? (_ll.session_label + ' — ' + _ll.rows.length + ' members') : 'End Of Session Award Summary')
-    + uploadZone('bd', 'By-division report',  _bd, _bd ? (_bd.session_label + ' — ' + _bd.rows.length + ' entries') : 'End Of Session Award Summary By Division')
+    + '<label class="upload-zone" data-uz="auto" id="dropZone">'
+    + '<div class="uz-title">Drop PDF here (or tap to choose)</div>'
+    + '<div class="uz-sub">Auto-detects all-league vs by-division. Upload one at a time or both at once.</div>'
+    + '<input type="file" accept="application/pdf" multiple data-uz-input="auto">'
+    + '</label>'
+    + '<div class="slot-row">'
+    + slotIndicator('All-league',  _ll)
+    + slotIndicator('By-division', _bd)
     + '</div>'
+    + (sessionMismatch
+        ? '<div class="banner err">⚠ Session mismatch — the two uploads are from different sessions: '
+          + '<strong>' + esc(_ll.session_label) + '</strong> (all-league) vs '
+          + '<strong>' + esc(_bd.session_label) + '</strong> (by-division). Reconcile is disabled.</div>'
+        : '')
     + '<div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">'
-    + '<button class="btn" id="reconBtn"' + (_ll && _bd ? '' : ' disabled') + '>Reconcile</button>'
+    + '<button class="btn" id="reconBtn"' + (_ll && _bd && !sessionMismatch ? '' : ' disabled') + '>Reconcile</button>'
     + '<button class="btn secondary" id="saveBtn"' + (_recon ? '' : ' disabled') + '>Save to Supabase</button>'
     + '<button class="btn danger" id="clearBtn"' + (_ll || _bd ? '' : ' disabled') + '>Clear</button>'
     + '</div>'
@@ -531,28 +574,42 @@ function render() {
   document.getElementById('clearBtn').addEventListener('click', doClear);
 }
 
-function uploadZone(kind, title, loaded, sub) {
-  return `<label class="upload-zone${loaded ? ' loaded' : ''}" data-uz="${kind}">
-    <div class="uz-title">${esc(title)}</div>
-    <div class="uz-sub">${esc(sub)}</div>
-    <input type="file" accept="application/pdf" data-uz-input="${kind}">
-  </label>`;
+function slotIndicator(label, state) {
+  const filled = !!state;
+  const sub = filled
+    ? esc((state.session_label || 'unknown session') + ' — ' + state.rows.length + ' rows'
+        + (state.filename ? ' · ' + state.filename : ''))
+    : '<span style="color:var(--text-dim);font-size:0.85rem;">(not loaded)</span>';
+  return '<div class="slot' + (filled ? ' filled' : '') + '">'
+    + '<div class="slot-dot"></div>'
+    + '<div class="slot-text">'
+    + '<div class="slot-label">' + esc(label) + '</div>'
+    + '<div class="slot-sub">' + sub + '</div>'
+    + '</div></div>';
 }
 
 function wireUploadZones() {
-  document.querySelectorAll('[data-uz]').forEach(zone => {
-    const kind = zone.dataset.uz;
-    const input = zone.querySelector('input[type=file]');
-    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
-    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
-    zone.addEventListener('drop', e => {
-      e.preventDefault();
-      zone.classList.remove('dragover');
-      if (e.dataTransfer.files.length) handleFile(kind, e.dataTransfer.files[0]);
-    });
-    input.addEventListener('change', e => {
-      if (e.target.files.length) handleFile(kind, e.target.files[0]);
-    });
+  const zone = document.getElementById('dropZone');
+  if (!zone) return;
+  const input = zone.querySelector('input[type=file]');
+  async function consumeFiles(files) {
+    // Process sequentially so toasts/state updates land in order.
+    for (const f of files) {
+      // eslint-disable-next-line no-await-in-loop
+      await handleFile('auto', f);
+    }
+  }
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) consumeFiles([...e.dataTransfer.files]);
+  });
+  input.addEventListener('change', e => {
+    if (e.target.files.length) consumeFiles([...e.target.files]);
+    // Reset the input so the same file can be re-picked if needed.
+    e.target.value = '';
   });
 }
 
@@ -586,10 +643,12 @@ async function handleFile(droppedKind, file) {
     _recon = null;  // any new upload invalidates reconciliation
     render();
     const niceSlot = slot === 'll' ? 'All-league' : 'By-division';
-    if (slot !== droppedKind) {
-      toast(niceSlot + ' detected from PDF content — routed to the correct slot. (' + parsed.rows.length + ' rows)');
-    } else {
-      toast(niceSlot + ' parsed: ' + parsed.rows.length + ' rows');
+    toast(niceSlot + ' loaded: ' + parsed.rows.length + ' rows · ' + (parsed.session_label || 'unknown session'),
+          'ok');
+    // Surface session mismatch as a separate, more attention-grabbing toast
+    // (the banner in the UI is the persistent indicator).
+    if (_ll && _bd && _ll.session_label && _bd.session_label && _ll.session_label !== _bd.session_label) {
+      toast('⚠ Session mismatch: "' + _ll.session_label + '" vs "' + _bd.session_label + '"', true);
     }
   } catch (e) {
     toast('Parse failed: ' + e.message, true);
@@ -686,10 +745,13 @@ function tagFor(kind) {
 
 /* ─── Toast ────────────────────────────────────────────────────────────*/
 let _toastTimer = null;
-function toast(msg, isErr) {
+function toast(msg, kind) {
+  // Backward compat: old call sites pass `true` for error. Treat `true`
+  // as 'err', falsy as default, and 'ok'/'err'/etc. as a CSS class.
   const t = document.getElementById('toast');
   t.textContent = msg;
-  t.className = 'toast shown' + (isErr ? ' err' : '');
+  const cls = kind === true ? 'err' : (typeof kind === 'string' ? kind : '');
+  t.className = 'toast shown' + (cls ? ' ' + cls : '');
   if (_toastTimer) clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => t.classList.remove('shown'), 3500);
 }
