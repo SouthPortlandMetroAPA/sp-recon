@@ -291,7 +291,7 @@ const HEADERS_APA   = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Ac
 let _ll = null;       // parsed all-league
 let _bd = null;       // parsed by-division
 let _8skunk = null;   // 8-ball skunk events: { session_label, printed_at, events: [...] }
-let _recon = null;    // (legacy, unused in v0.8+ — kept for backward-compat with doReconcile)
+let _recon = null;    // populated by doReconcile() — drives the discrepancy card
 let _logSearch  = '';
 let _logSortCol = 'member';   // 'member' | 'team' | 'week' | 'sp'
 let _logSortDir = 'asc';      // 'asc' | 'desc'
@@ -828,15 +828,36 @@ function render() {
           + '</div>'
         : '')
     + '<div class="action-bar">'
+    +   '<button class="btn large" id="reconBtn"' + (_ll && _bd && !sessionMismatch ? '' : ' disabled')
+    +     ' title="' + (_ll && _bd ? 'Compare all-league vs by-division and surface discrepancies' : 'Load both All-league AND By-division to enable') + '">Reconcile</button>'
     +   '<button class="btn secondary" id="saveBtn" disabled title="Save to Supabase (v0.9)">Save to Supabase</button>'
     +   '<span class="grow"></span>'
     +   '<button class="btn danger" id="clearBtn"' + (_ll || _bd || _8skunk ? '' : ' disabled') + '>Clear</button>'
     + '</div>'
     + '</div>';
 
+  // ─── Reconciliation (discrepancy detection) ──────────────────────────
+  // v0.9 restored alongside the transaction log: click Reconcile to compare
+  // all-league vs by-division and surface MATCH / MISSING_IN_BD / EXTRA_IN_BD
+  // / CATEGORY_MISMATCH / BD_ONLY / LL_ONLY / GS_ONLY classifications.
+  if (_recon) {
+    const counts = countByKind(_recon);
+    html += '<div class="card">'
+      + '<h2>Reconciliation <span style="font-weight:500; color:var(--text-dim); font-size:0.86rem;">'
+      +   '· all-league vs by-division'
+      + '</span></h2>'
+      + '<div class="summary-grid">'
+      +   sgcell('Matched',         counts.MATCH || 0, 'ok')
+      +   sgcell('Discrepancies',   (_recon.length - (counts.MATCH || 0) - (counts.GS_ONLY || 0)), 'bad')
+      +   sgcell('Grand-slam only', counts.GS_ONLY || 0, '')
+      +   sgcell('Total members',   _recon.length, '')
+      + '</div>'
+      + renderTable(_recon)
+      + '</div>';
+  }
+
   // ─── Transaction log ─────────────────────────────────────────────────
-  // Replaces the v0.7 reconciliation + by-person-by-team views per user
-  // direction 2026-05-16: "becomes a transaction log of special performance."
+  // The per-event log of every SP, regardless of reconciliation state.
   if (_bd || _ll || _8skunk) {
     const events = buildEventLog();
     const filtered = filterAndSortEvents(events);
@@ -858,6 +879,8 @@ function render() {
 
   main.innerHTML = html;
   wireUploadZones();
+  const reconBtn = document.getElementById('reconBtn');
+  if (reconBtn) reconBtn.addEventListener('click', doReconcile);
   document.getElementById('saveBtn').addEventListener('click', doSave);
   document.getElementById('clearBtn').addEventListener('click', doClear);
   // Re-wire search input + sortable headers.
@@ -977,6 +1000,15 @@ async function handleFile(_droppedKind, file) {
   } catch (e) {
     toast('Parse failed: ' + e.message, true);
   }
+}
+
+function doReconcile() {
+  if (!_ll || !_bd) {
+    toast('Need both All-league and By-division loaded', true);
+    return;
+  }
+  _recon = reconcile(_ll, _bd);
+  render();
 }
 
 function doClear() {
