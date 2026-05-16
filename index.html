@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ea002a">
+<title>SP Reconciler — SPM APA</title>
+<style>
+  :root {
+    --spm-red:    #ea002a;
+    --spm-blue:   #0031a1;
+    --text:       #111827;
+    --text-dim:   #6b7280;
+    --border:     #e5e7eb;
+    --bg:         #f9fafb;
+    --bg-card:    #ffffff;
+    --ok:         #16a34a;
+    --warn:       #ca8a04;
+    --bad:        #dc2626;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px;
+    background: linear-gradient(90deg, var(--spm-red) 0%, var(--spm-blue) 100%);
+    color: #fff;
+  }
+  .header h1 {
+    font-size: 1.15rem; font-weight: 800; margin: 0;
+    letter-spacing: 0.2px;
+  }
+  .header .ver { font-size: 0.78rem; opacity: 0.85; }
+  main { max-width: 1100px; margin: 0 auto; padding: 18px; }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card h2 {
+    margin: 0 0 12px; font-size: 1.05rem; font-weight: 800;
+    color: var(--text);
+  }
+  .empty {
+    text-align: center; padding: 60px 20px;
+    color: var(--text-dim);
+  }
+  .empty-title { font-size: 1.1rem; font-weight: 800; color: var(--text); margin-bottom: 6px; }
+  .empty-msg { font-size: 0.92rem; line-height: 1.5; max-width: 420px; margin: 0 auto; }
+  .empty code {
+    background: #f3f4f6; padding: 2px 6px; border-radius: 4px;
+    font-family: ui-monospace, monospace; font-size: 0.85em;
+  }
+
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 22px;
+    text-align: center;
+    background: #fafbfc;
+    cursor: pointer;
+    transition: border-color 120ms, background-color 120ms;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--spm-blue);
+    background: #eff6ff;
+  }
+  .upload-zone.loaded {
+    border-color: var(--ok);
+    background: #f0fdf4;
+  }
+  .upload-zone .uz-title { font-weight: 700; margin-bottom: 4px; }
+  .upload-zone .uz-sub { color: var(--text-dim); font-size: 0.88rem; }
+  .upload-zone input[type=file] { display: none; }
+  .upload-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+  @media (max-width: 600px) {
+    .upload-grid { grid-template-columns: 1fr; }
+  }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: inherit; font-weight: 700; font-size: 0.92rem;
+    padding: 8px 14px; border-radius: 8px;
+    background: var(--spm-blue); color: #fff;
+    border: 1px solid var(--spm-blue);
+    cursor: pointer;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.secondary { background: #fff; color: var(--spm-blue); }
+  .btn.danger { background: #fff; color: var(--bad); border-color: var(--bad); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td {
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #f3f4f6; font-weight: 800; font-size: 0.84rem; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.ok td { background: #fff; }
+  tr.bad td { background: #fef2f2; }
+  tr.warn td { background: #fef3c7; }
+  .tag {
+    display: inline-block; padding: 1px 8px; border-radius: 10px;
+    font-size: 0.74rem; font-weight: 800; letter-spacing: 0.3px;
+  }
+  .tag.ok   { background: #dcfce7; color: #14532d; }
+  .tag.bad  { background: #fee2e2; color: #7f1d1d; }
+  .tag.warn { background: #fef3c7; color: #713f12; }
+  .tag.info { background: #dbeafe; color: #1e3a8a; }
+
+  .summary-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+    margin-bottom: 12px;
+  }
+  @media (max-width: 600px) {
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .sgcell {
+    background: #f9fafb; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px;
+  }
+  .sgcell .lbl { font-size: 0.76rem; color: var(--text-dim); }
+  .sgcell .val { font-size: 1.4rem; font-weight: 800; }
+  .sgcell .val.bad  { color: var(--bad); }
+  .sgcell .val.ok   { color: var(--ok); }
+
+  details { margin-top: 6px; }
+  details > summary {
+    cursor: pointer; font-size: 0.85rem; color: var(--spm-blue);
+    user-select: none;
+  }
+  .by-div-list { margin-top: 4px; padding-left: 14px; font-size: 0.85rem; color: var(--text-dim); }
+  .by-div-list li { margin: 2px 0; }
+
+  .update-overlay {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.85);
+    display: none; align-items: center; justify-content: center;
+    z-index: 9999; color: #fff; text-align: center; padding: 24px;
+  }
+  .update-overlay.shown { display: flex; }
+  .update-overlay .uo-card {
+    background: var(--bg-card); color: var(--text);
+    border-radius: 14px; padding: 22px; max-width: 380px;
+  }
+
+  .toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: #fff; padding: 10px 18px;
+    border-radius: 8px; font-size: 0.92rem; font-weight: 600;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+    z-index: 1000; opacity: 0; transition: opacity 200ms;
+  }
+  .toast.shown { opacity: 1; }
+  .toast.err { background: var(--bad); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>SP Reconciler</h1>
+  <div class="ver" id="versionLabel"></div>
+</div>
+
+<main id="main"></main>
+
+<div class="update-overlay" id="updateOverlay">
+  <div class="uo-card">
+    <h2 style="margin:0 0 8px;font-size:1.05rem;">New version available</h2>
+    <p style="margin:0 0 14px;">A newer version of SP Reconciler has been deployed. The page will reload shortly to pick it up.</p>
+    <div class="ver" id="versionDetail" style="color:var(--text-dim);font-size:0.85rem;"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="version.js?_=__TS__"></script>
+<script>
+/* version.js cache-buster (server-side template would replace __TS__; for
+   GitHub Pages we just inline below). */
+(function(){
+  const s = document.currentScript.previousElementSibling;
+  if (s && s.src.indexOf('__TS__') !== -1) {
+    s.src = s.src.replace('__TS__', Date.now());
+  }
+})();
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   SPReconciler — ingest two APA End-Of-Session SP reports and reconcile
+   them. Source of truth: the all-league report. The by-division report
+   has additional team-of-record info per award but is sometimes wrong.
+
+   Internal-only admin tool — gated behind ?key=<service_role>.
+   ════════════════════════════════════════════════════════════════════════ */
+const APP_NAME = 'SPReconciler';
+const SB_URL   = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_ANON  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+const SCHEMA   = 'sprecon';
+
+const URL_PARAMS = new URLSearchParams(location.search);
+const SB_KEY     = URL_PARAMS.get('key') || '';
+const HAS_KEY    = !!SB_KEY;
+
+const HEADERS_READ  = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': SCHEMA };
+const HEADERS_WRITE = HAS_KEY
+  ? { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY,
+      'Content-Type': 'application/json',
+      'Accept-Profile': SCHEMA, 'Content-Profile': SCHEMA,
+      Prefer: 'return=representation' }
+  : null;
+const HEADERS_APA   = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': 'apa_core' };
+
+/* ─── State ─────────────────────────────────────────────────────────────*/
+let _ll = null;   // parsed all-league: { session_label, printed_at, rows: [{member_number, member_name, rackless, ...}] }
+let _bd = null;   // parsed by-division: { session_label, printed_at, rows: [{division_number, division_name, team_number, member_number, ...}] }
+let _recon = null; // reconciliation result
+
+/* ─── PDF.js (lazy) ─────────────────────────────────────────────────────*/
+let _pdfjs = null;
+async function loadPdfjs() {
+  if (_pdfjs) return _pdfjs;
+  _pdfjs = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs');
+  _pdfjs.GlobalWorkerOptions.workerSrc =
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
+  return _pdfjs;
+}
+
+/* Extract text from PDF, returning array of page-line arrays. */
+async function pdfPageLines(file) {
+  const pdfjs = await loadPdfjs();
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  const pages = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    // Bucket text items by Y coordinate (transform[5]) — items with the
+    // same Y belong to the same visual line.
+    const lines = new Map();
+    for (const it of tc.items) {
+      const y = Math.round(it.transform[5] * 10) / 10;
+      const x = it.transform[4];
+      if (!lines.has(y)) lines.set(y, []);
+      lines.get(y).push({ x, str: it.str });
+    }
+    // Sort each line left-to-right, then collapse to string.
+    const sorted = [...lines.entries()]
+      .sort((a, b) => b[0] - a[0])  // PDF y origin = bottom-left, so descending y = top-to-bottom
+      .map(([_, items]) => items.sort((a, b) => a.x - b.x).map(i => i.str).join(' ').replace(/\s+/g, ' ').trim())
+      .filter(line => line.length > 0);
+    pages.push(sorted);
+  }
+  return pages;
+}
+
+/* ─── Parser: All-league ───────────────────────────────────────────────
+   Each data line shape:
+     <5-digit member#> <member name (with spaces)> <6 ints> [<grand-slam int>]
+   The 6 trailing ints are always present; grand_slam is sometimes missing
+   (treat as 0). Right-parse to handle name-with-spaces.
+*/
+function parseAllLeague(pages) {
+  const all = pages.flat();
+  const rows = [];
+  let session_label = null, printed_at = null;
+  for (const line of all) {
+    if (!session_label) {
+      const m = line.match(/^(Summer|Spring|Fall|Winter)\s+\d{4}$/i);
+      if (m) session_label = line;
+    }
+    if (!printed_at) {
+      const m = line.match(/Printed\s+(\d+\/\d+\/\d+)\s*\/\s*(\d+:\d+:\d+\s*[AP]M)/i);
+      if (m) printed_at = m[1] + ' ' + m[2];
+    }
+    // Match data rows: starts with 5-digit member number.
+    const m = line.match(/^(\d{5})\s+(.+)$/);
+    if (!m) continue;
+    const member_number = m[1];
+    const rest = m[2];
+    // Pull trailing integers — 6 or 7 of them.
+    const tail = rest.match(/^(.+?)((?:\s+\d+){6,7})\s*$/);
+    if (!tail) continue;
+    const name = tail[1].trim();
+    const ints = tail[2].trim().split(/\s+/).map(s => parseInt(s, 10));
+    let rackless, eight_ob, eight_br, nine_os, nine_br, skunk, grand_slam;
+    if (ints.length === 7) {
+      [rackless, eight_ob, eight_br, nine_os, nine_br, skunk, grand_slam] = ints;
+    } else {
+      [rackless, eight_ob, eight_br, nine_os, nine_br, skunk] = ints;
+      grand_slam = 0;
+    }
+    rows.push({ member_number, member_name: name,
+                rackless, eight_ob, eight_br, nine_os, nine_br, skunk, grand_slam });
+  }
+  // Dedup by member_number (multi-page repeats).
+  const byMem = new Map();
+  for (const r of rows) {
+    if (!byMem.has(r.member_number)) byMem.set(r.member_number, r);
+  }
+  return { session_label, printed_at, rows: [...byMem.values()] };
+}
+
+/* ─── Parser: By-division ──────────────────────────────────────────────
+   Two kinds of lines:
+   - Division header:  "005 - No-Po"  (1-3 digit number, dash, name)
+   - Data row:         "<member#> <member name> <6 ints> <team#>"
+                        team# = 5-digit string at end
+*/
+function parseByDivision(pages) {
+  const all = pages.flat();
+  const rows = [];
+  let session_label = null, printed_at = null;
+  let cur_div_num = null, cur_div_name = null;
+  for (const line of all) {
+    if (!session_label) {
+      const m = line.match(/^(Summer|Spring|Fall|Winter)\s+\d{4}$/i);
+      if (m) session_label = line;
+    }
+    if (!printed_at) {
+      const m = line.match(/Printed\s+(\d+\/\d+\/\d+)\s*\/\s*(\d+:\d+:\d+\s*[AP]M)/i);
+      if (m) printed_at = m[1] + ' ' + m[2];
+    }
+    // Division header — 1 to 3 leading digits.
+    const dh = line.match(/^(\d{1,3})\s*-\s*(.+)$/);
+    if (dh && !/^\d{5}\s/.test(line)) {
+      cur_div_num = dh[1].padStart(3, '0');
+      cur_div_name = dh[2].trim();
+      continue;
+    }
+    if (!cur_div_num) continue;
+    // Data row.
+    const m = line.match(/^(\d{5})\s+(.+)$/);
+    if (!m) continue;
+    const member_number = m[1];
+    const rest = m[2];
+    // Right-parse: 6 ints then a 5-digit team number.
+    const tail = rest.match(/^(.+?)((?:\s+\d+){6})\s+(\d{5})\s*$/);
+    if (!tail) continue;
+    const name = tail[1].trim();
+    const ints = tail[2].trim().split(/\s+/).map(s => parseInt(s, 10));
+    const [rackless, eight_ob, eight_br, nine_os, nine_br, skunk] = ints;
+    const team_number = tail[3];
+    rows.push({
+      division_number: cur_div_num,
+      division_name: cur_div_name,
+      team_number,
+      member_number, member_name: name,
+      rackless, eight_ob, eight_br, nine_os, nine_br, skunk
+    });
+  }
+  return { session_label, printed_at, rows };
+}
+
+/* ─── Reconciliation ───────────────────────────────────────────────────*/
+const CATS = ['rackless','eight_ob','eight_br','nine_os','nine_br','skunk'];
+const CAT_LABELS = { rackless:'Rackless', eight_ob:'8 OB', eight_br:'8 B&R',
+                     nine_os:'9 OS', nine_br:'9 B&R', skunk:'Skunk', grand_slam:'Grand Slam' };
+
+function reconcile(ll, bd) {
+  // Index by member.
+  const llByMem = new Map(ll.rows.map(r => [r.member_number, r]));
+  const bdByMem = new Map();
+  for (const r of bd.rows) {
+    if (!bdByMem.has(r.member_number)) bdByMem.set(r.member_number, []);
+    bdByMem.get(r.member_number).push(r);
+  }
+  const members = new Set([...llByMem.keys(), ...bdByMem.keys()]);
+  const results = [];
+  for (const m of members) {
+    const ll_row = llByMem.get(m);
+    const bd_rows = bdByMem.get(m) || [];
+    const bd_sum = {};
+    for (const c of CATS) bd_sum[c] = bd_rows.reduce((s, r) => s + (r[c]||0), 0);
+    if (!ll_row) {
+      results.push({ kind: 'BD_ONLY', member_number: m,
+                     member_name: bd_rows[0].member_name,
+                     ll: null, bd_sum, bd_rows });
+      continue;
+    }
+    if (bd_rows.length === 0) {
+      // Member in all-league but not by-division. Only meaningful if they
+      // have any non-grand-slam counts, since by-division can't represent GS.
+      const ll_non_gs = CATS.reduce((s,c) => s + (ll_row[c]||0), 0);
+      if (ll_non_gs > 0) {
+        results.push({ kind: 'LL_ONLY', member_number: m,
+                       member_name: ll_row.member_name,
+                       ll: ll_row, bd_sum: null, bd_rows: [] });
+      } else if ((ll_row.grand_slam||0) > 0) {
+        // Has only Grand Slam — by-division can't represent it. Not a true discrepancy.
+        results.push({ kind: 'GS_ONLY', member_number: m,
+                       member_name: ll_row.member_name,
+                       ll: ll_row, bd_sum: null, bd_rows: [] });
+      }
+      continue;
+    }
+    // Both present — compare per-category.
+    let cat_diffs = [];
+    for (const c of CATS) {
+      const a = ll_row[c]||0, b = bd_sum[c]||0;
+      if (a !== b) cat_diffs.push({ cat: c, ll: a, bd: b });
+    }
+    if (cat_diffs.length === 0) {
+      results.push({ kind: 'MATCH', member_number: m,
+                     member_name: ll_row.member_name,
+                     ll: ll_row, bd_sum, bd_rows });
+    } else {
+      // Bucket the kind: missing, extra, or category-mismatch.
+      const ll_total = cat_diffs.reduce((s,d) => s + d.ll, 0);
+      const bd_total = cat_diffs.reduce((s,d) => s + d.bd, 0);
+      let kind = 'CATEGORY_MISMATCH';
+      if (ll_total > bd_total) kind = 'MISSING_IN_BD';
+      else if (bd_total > ll_total) kind = 'EXTRA_IN_BD';
+      results.push({ kind, member_number: m,
+                     member_name: ll_row.member_name,
+                     ll: ll_row, bd_sum, bd_rows, cat_diffs });
+    }
+  }
+  // Sort: discrepancies first, then matches.
+  const ord = { BD_ONLY:0, LL_ONLY:1, MISSING_IN_BD:2, EXTRA_IN_BD:3, CATEGORY_MISMATCH:4, GS_ONLY:5, MATCH:6 };
+  results.sort((a,b) => (ord[a.kind] - ord[b.kind]) || a.member_number.localeCompare(b.member_number));
+  return results;
+}
+
+/* ─── Render ───────────────────────────────────────────────────────────*/
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function render() {
+  const main = document.getElementById('main');
+  if (!HAS_KEY) {
+    main.innerHTML =
+      '<div class="card empty">'
+      + '<div class="empty-title">Access required</div>'
+      + '<div class="empty-msg">Append <code>?key=&lt;service_role&gt;</code> to the URL to enter.</div>'
+      + '</div>';
+    return;
+  }
+
+  let html = '';
+
+  // Upload card.
+  html += '<div class="card">'
+    + '<h2>Upload session reports</h2>'
+    + '<div class="upload-grid">'
+    + uploadZone('ll', 'All-league report', _ll, _ll ? (_ll.session_label + ' — ' + _ll.rows.length + ' members') : 'End Of Session Award Summary')
+    + uploadZone('bd', 'By-division report',  _bd, _bd ? (_bd.session_label + ' — ' + _bd.rows.length + ' entries') : 'End Of Session Award Summary By Division')
+    + '</div>'
+    + '<div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">'
+    + '<button class="btn" id="reconBtn"' + (_ll && _bd ? '' : ' disabled') + '>Reconcile</button>'
+    + '<button class="btn secondary" id="saveBtn"' + (_recon ? '' : ' disabled') + '>Save to Supabase</button>'
+    + '<button class="btn danger" id="clearBtn"' + (_ll || _bd ? '' : ' disabled') + '>Clear</button>'
+    + '</div>'
+    + '</div>';
+
+  // Reconciliation result.
+  if (_recon) {
+    const counts = countByKind(_recon);
+    html += '<div class="card">'
+      + '<h2>Reconciliation</h2>'
+      + '<div class="summary-grid">'
+      + sgcell('Matched', counts.MATCH || 0, 'ok')
+      + sgcell('Discrepancies', (_recon.length - (counts.MATCH || 0) - (counts.GS_ONLY || 0)), 'bad')
+      + sgcell('Grand-slam only', counts.GS_ONLY || 0, '')
+      + sgcell('Total members', _recon.length, '')
+      + '</div>'
+      + renderTable(_recon)
+      + '</div>';
+  }
+
+  main.innerHTML = html;
+  wireUploadZones();
+  document.getElementById('reconBtn').addEventListener('click', doReconcile);
+  document.getElementById('saveBtn').addEventListener('click', doSave);
+  document.getElementById('clearBtn').addEventListener('click', doClear);
+}
+
+function uploadZone(kind, title, loaded, sub) {
+  return `<label class="upload-zone${loaded ? ' loaded' : ''}" data-uz="${kind}">
+    <div class="uz-title">${esc(title)}</div>
+    <div class="uz-sub">${esc(sub)}</div>
+    <input type="file" accept="application/pdf" data-uz-input="${kind}">
+  </label>`;
+}
+
+function wireUploadZones() {
+  document.querySelectorAll('[data-uz]').forEach(zone => {
+    const kind = zone.dataset.uz;
+    const input = zone.querySelector('input[type=file]');
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('dragover');
+      if (e.dataTransfer.files.length) handleFile(kind, e.dataTransfer.files[0]);
+    });
+    input.addEventListener('change', e => {
+      if (e.target.files.length) handleFile(kind, e.target.files[0]);
+    });
+  });
+}
+
+async function handleFile(kind, file) {
+  if (!file || file.type !== 'application/pdf') {
+    toast('Only PDF files are accepted', true);
+    return;
+  }
+  try {
+    toast('Parsing ' + file.name + '…');
+    const pages = await pdfPageLines(file);
+    if (kind === 'll') {
+      _ll = parseAllLeague(pages);
+      _ll.filename = file.name;
+      if (_ll.rows.length === 0) throw new Error('No data rows parsed — wrong PDF?');
+    } else {
+      _bd = parseByDivision(pages);
+      _bd.filename = file.name;
+      if (_bd.rows.length === 0) throw new Error('No data rows parsed — wrong PDF?');
+    }
+    _recon = null;  // any new upload invalidates reconciliation
+    render();
+    toast((kind === 'll' ? 'All-league' : 'By-division') + ' parsed: ' + (kind === 'll' ? _ll.rows.length : _bd.rows.length) + ' rows');
+  } catch (e) {
+    toast('Parse failed: ' + e.message, true);
+  }
+}
+
+function doReconcile() {
+  if (!_ll || !_bd) return;
+  _recon = reconcile(_ll, _bd);
+  render();
+}
+
+function doClear() {
+  if (!confirm('Clear all loaded data?')) return;
+  _ll = _bd = _recon = null;
+  render();
+}
+
+async function doSave() {
+  if (!_recon) return;
+  toast('Save to Supabase — not implemented yet (v0.2)');
+  // TODO v0.2: POST to sprecon.reports, then bulk insert all_league_rows + by_division_rows.
+}
+
+function countByKind(recon) {
+  const c = {};
+  for (const r of recon) c[r.kind] = (c[r.kind] || 0) + 1;
+  return c;
+}
+
+function sgcell(label, val, cls) {
+  return `<div class="sgcell"><div class="lbl">${esc(label)}</div><div class="val ${esc(cls)}">${esc(val)}</div></div>`;
+}
+
+function renderTable(recon) {
+  if (recon.length === 0) return '<div class="empty">Nothing to show.</div>';
+  let html = '<div style="overflow-x:auto"><table>'
+    + '<thead><tr><th>Member</th><th>Status</th><th class="n">Rack.</th><th class="n">8OB</th><th class="n">8B&R</th><th class="n">9OS</th><th class="n">9B&R</th><th class="n">Skunk</th><th class="n">GS</th><th>Where earned (by-div)</th></tr></thead><tbody>';
+  for (const r of recon) {
+    const tag = tagFor(r.kind);
+    const rowCls = r.kind === 'MATCH' || r.kind === 'GS_ONLY' ? 'ok' : 'bad';
+    html += '<tr class="' + rowCls + '">';
+    html += '<td><strong>' + esc(r.member_number) + '</strong><br>' + esc(r.member_name) + '</td>';
+    html += '<td>' + tag + '</td>';
+    for (const c of CATS) {
+      const ll = r.ll ? (r.ll[c]||0) : null;
+      const bd = r.bd_sum ? (r.bd_sum[c]||0) : null;
+      html += '<td class="n">' + cellCounts(ll, bd) + '</td>';
+    }
+    // Grand slam — by-division has no column for it, so just show LL.
+    const gs = r.ll ? (r.ll.grand_slam||0) : 0;
+    html += '<td class="n">' + (gs > 0 ? '<strong>'+gs+'</strong>' : gs) + '</td>';
+    // Where earned (by-division row list).
+    html += '<td>' + (r.bd_rows && r.bd_rows.length
+      ? '<details><summary>' + r.bd_rows.length + ' entr' + (r.bd_rows.length === 1 ? 'y' : 'ies') + '</summary>'
+        + '<ul class="by-div-list">'
+        + r.bd_rows.map(b => '<li>' + esc(b.division_number + ' ' + b.division_name + ' · team ' + b.team_number)
+            + ' — ' + summarizeCounts(b) + '</li>').join('')
+        + '</ul></details>'
+      : '<span style="color:var(--text-dim);font-size:0.85rem;">—</span>') + '</td>';
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function cellCounts(ll, bd) {
+  if (ll == null && bd == null) return '<span style="color:var(--text-dim)">—</span>';
+  if (ll === bd) return ll;
+  return '<span style="color:var(--bad)"><strong>' + (ll == null ? '—' : ll) + '</strong> / ' + (bd == null ? '—' : bd) + '</span>';
+}
+
+function summarizeCounts(row) {
+  const parts = [];
+  for (const c of CATS) {
+    if ((row[c]||0) > 0) parts.push(CAT_LABELS[c] + '×' + row[c]);
+  }
+  return parts.length ? parts.join(', ') : '0';
+}
+
+function tagFor(kind) {
+  const map = {
+    MATCH:           ['ok',   'MATCH'],
+    GS_ONLY:         ['info', 'GS ONLY'],
+    BD_ONLY:         ['bad',  'BD ONLY'],
+    LL_ONLY:         ['bad',  'LL ONLY'],
+    MISSING_IN_BD:   ['bad',  'MISSING IN BD'],
+    EXTRA_IN_BD:     ['warn', 'EXTRA IN BD'],
+    CATEGORY_MISMATCH: ['warn', 'CAT MISMATCH']
+  };
+  const [cls, label] = map[kind] || ['', kind];
+  return '<span class="tag ' + cls + '">' + esc(label) + '</span>';
+}
+
+/* ─── Toast ────────────────────────────────────────────────────────────*/
+let _toastTimer = null;
+function toast(msg, isErr) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast shown' + (isErr ? ' err' : '');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('shown'), 3500);
+}
+
+/* ─── Version auto-update ──────────────────────────────────────────────*/
+async function checkVersion() {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/apps?app_name=eq.' + APP_NAME + '&select=version', {
+      headers: HEADERS_APA
+    });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data && data[0] && data[0].version && data[0].version !== window.APP_VERSION) {
+      const overlay = document.getElementById('updateOverlay');
+      const detail = document.getElementById('versionDetail');
+      detail.textContent = 'Current: ' + window.APP_VERSION + ' → New: ' + data[0].version;
+      overlay.classList.add('shown');
+      setTimeout(() => location.reload(), 2500);
+    }
+  } catch (_) {}
+}
+
+/* ─── Init ─────────────────────────────────────────────────────────────*/
+async function init() {
+  document.title = APP_NAME;
+  document.getElementById('versionLabel').textContent = 'v' + (window.APP_VERSION || '?');
+  checkVersion();
+  setInterval(checkVersion, 30000);
+  render();
+}
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
