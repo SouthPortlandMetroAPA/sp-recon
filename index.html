@@ -274,6 +274,26 @@ async function pdfPageLines(file) {
    i (the "header" line) with the first subsequent line that's all-ints. */
 const INT_ROW_RE = /^\d+(?:\s+\d+){5}$/;   // exactly 6 integers, space-separated
 
+/* Detect the PDF type from its content (not its filename — users have
+   files like "spring_all_xdiv.pdf" that are actually all-league). Returns
+   'll', 'bd', or 'unknown'. Strategy: title text wins, with division-
+   header presence as a fallback signal. */
+function detectKind(pages) {
+  const lines = pages.flat();
+  // Title-based detection (most reliable).
+  for (const ln of lines.slice(0, 20)) {
+    if (/End Of Session Award Summary By Division/i.test(ln)) return 'bd';
+  }
+  for (const ln of lines.slice(0, 20)) {
+    if (/End Of Session Award Summary/i.test(ln)) return 'll';
+  }
+  // Fallback: division-section header pattern (e.g. "005 - No-Po").
+  for (const ln of lines) {
+    if (/^\d{1,3}\s*-\s*\S/.test(ln) && !/^\d{5}\b/.test(ln)) return 'bd';
+  }
+  return 'unknown';
+}
+
 function findIntsAfter(lines, i) {
   // Look ahead a few lines for the int row associated with the header at i.
   // Skip blank lines and page-footer noise. Don't skip past another header.
@@ -536,7 +556,7 @@ function wireUploadZones() {
   });
 }
 
-async function handleFile(kind, file) {
+async function handleFile(droppedKind, file) {
   if (!file || file.type !== 'application/pdf') {
     toast('Only PDF files are accepted', true);
     return;
@@ -544,18 +564,33 @@ async function handleFile(kind, file) {
   try {
     toast('Parsing ' + file.name + '…');
     const pages = await pdfPageLines(file);
-    if (kind === 'll') {
-      _ll = parseAllLeague(pages);
-      _ll.filename = file.name;
-      if (_ll.rows.length === 0) throw new Error('No data rows parsed — wrong PDF?');
-    } else {
-      _bd = parseByDivision(pages);
-      _bd.filename = file.name;
-      if (_bd.rows.length === 0) throw new Error('No data rows parsed — wrong PDF?');
+    // Auto-detect from PDF content. Filenames lie ('spring_all_xdiv.pdf'
+    // can actually be an all-league report). Route to whichever parser the
+    // PDF's title text says it is, regardless of which zone was dropped on.
+    const detected = detectKind(pages);
+    if (detected === 'unknown') {
+      throw new Error('Could not identify report type — title text didn’t match either format');
     }
+    const slot = detected;  // 'll' or 'bd'
+    let parsed;
+    if (slot === 'll') {
+      parsed = parseAllLeague(pages);
+    } else {
+      parsed = parseByDivision(pages);
+    }
+    parsed.filename = file.name;
+    if (parsed.rows.length === 0) {
+      throw new Error('Identified as ' + (slot === 'll' ? 'all-league' : 'by-division') + ' but no data rows extracted');
+    }
+    if (slot === 'll') _ll = parsed; else _bd = parsed;
     _recon = null;  // any new upload invalidates reconciliation
     render();
-    toast((kind === 'll' ? 'All-league' : 'By-division') + ' parsed: ' + (kind === 'll' ? _ll.rows.length : _bd.rows.length) + ' rows');
+    const niceSlot = slot === 'll' ? 'All-league' : 'By-division';
+    if (slot !== droppedKind) {
+      toast(niceSlot + ' detected from PDF content — routed to the correct slot. (' + parsed.rows.length + ' rows)');
+    } else {
+      toast(niceSlot + ' parsed: ' + parsed.rows.length + ' rows');
+    }
   } catch (e) {
     toast('Parse failed: ' + e.message, true);
   }

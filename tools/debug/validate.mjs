@@ -12,6 +12,11 @@ import path from 'node:path';
 
 const LL_PDF = 'C:/Users/ptsol/Downloads/summer26_all_sp.pdf';
 const BD_PDF = 'C:/Users/ptsol/Downloads/summer26_all_sp_x_div.pdf';
+const SPRING_MISNAMED_PDF = 'C:/Users/ptsol/Downloads/spring_all_xdiv.pdf';
+
+// Expected totals from each PDF's footer "Total # of Patches" / "Totals" row.
+const EXPECT_SUMMER = { rackless: 138, eight_ob: 32, eight_br: 33, nine_os: 65, nine_br: 24, skunk: 1 };
+const EXPECT_SPRING_LL = { rackless: 154, eight_ob: 40, eight_br: 41, nine_os: 77, nine_br: 30, skunk: 4 };
 
 // Re-extract parser logic from index.html so we test the SAME code.
 const html = readFileSync(path.resolve('../../index.html'), 'utf8');
@@ -152,37 +157,66 @@ function summarizeTotals(rows, fields) {
   return t;
 }
 
-// Known expected totals from the PDF totals row:
-// "Total # of Patches: 138 32 33 65 24 1"
-const EXPECTED = { rackless: 138, eight_ob: 32, eight_br: 33, nine_os: 65, nine_br: 24, skunk: 1 };
+function detectKind(pages) {
+  const lines = pages.flat();
+  for (const ln of lines.slice(0, 20)) {
+    if (/End Of Session Award Summary By Division/i.test(ln)) return 'bd';
+  }
+  for (const ln of lines.slice(0, 20)) {
+    if (/End Of Session Award Summary/i.test(ln)) return 'll';
+  }
+  for (const ln of lines) {
+    if (/^\d{1,3}\s*-\s*\S/.test(ln) && !/^\d{5}\b/.test(ln)) return 'bd';
+  }
+  return 'unknown';
+}
 
 console.log('Validating SPReconciler parsers...\n');
 
 const llPages = await pdfPageLines(LL_PDF);
 const ll = parseAllLeague(llPages);
 
-console.log('=== ALL-LEAGUE ===');
+console.log('=== summer26_all_sp.pdf (ALL-LEAGUE) ===');
+console.log('  detected:', detectKind(llPages));
 console.log('  session:', ll.session_label, ' printed:', ll.printed_at);
 console.log('  member rows:', ll.rows.length);
-const llTotals = summarizeTotals(ll.rows, Object.keys(EXPECTED));
+const llTotals = summarizeTotals(ll.rows, Object.keys(EXPECT_SUMMER));
 console.log('  totals:', JSON.stringify(llTotals));
-console.log('  expect:', JSON.stringify(EXPECTED));
-const llOK = Object.keys(EXPECTED).every(k => llTotals[k] === EXPECTED[k]);
+console.log('  expect:', JSON.stringify(EXPECT_SUMMER));
+const llOK = Object.keys(EXPECT_SUMMER).every(k => llTotals[k] === EXPECT_SUMMER[k]);
 console.log('  match:', llOK ? '✅' : '❌');
 
 const bdPages = await pdfPageLines(BD_PDF);
 const bd = parseByDivision(bdPages);
 
-console.log('\n=== BY-DIVISION ===');
+console.log('\n=== summer26_all_sp_x_div.pdf (BY-DIVISION) ===');
+console.log('  detected:', detectKind(bdPages));
 console.log('  session:', bd.session_label, ' printed:', bd.printed_at);
 console.log('  member-division rows:', bd.rows.length);
-const bdTotals = summarizeTotals(bd.rows, Object.keys(EXPECTED));
+const bdTotals = summarizeTotals(bd.rows, Object.keys(EXPECT_SUMMER));
 console.log('  totals:', JSON.stringify(bdTotals));
-console.log('  expect:', JSON.stringify(EXPECTED));
-const bdOK = Object.keys(EXPECTED).every(k => bdTotals[k] === EXPECTED[k]);
+console.log('  expect:', JSON.stringify(EXPECT_SUMMER));
+const bdOK = Object.keys(EXPECT_SUMMER).every(k => bdTotals[k] === EXPECT_SUMMER[k]);
 console.log('  match:', bdOK ? '✅' : '❌');
 const divs = new Set(bd.rows.map(r => r.division_number));
 console.log('  distinct divisions:', divs.size);
+
+// New: misnamed all-league PDF that previously failed.
+const springPages = await pdfPageLines(SPRING_MISNAMED_PDF);
+const springDetected = detectKind(springPages);
+console.log('\n=== spring_all_xdiv.pdf (misleading filename) ===');
+console.log('  detected:', springDetected);
+if (springDetected !== 'll') {
+  console.log('  ❌ Expected ll detection from PDF content (filename has _xdiv but content is all-league)');
+}
+const spring = parseAllLeague(springPages);
+console.log('  session:', spring.session_label, ' printed:', spring.printed_at);
+console.log('  member rows:', spring.rows.length);
+const springTotals = summarizeTotals(spring.rows, Object.keys(EXPECT_SPRING_LL));
+console.log('  totals:', JSON.stringify(springTotals));
+console.log('  expect:', JSON.stringify(EXPECT_SPRING_LL));
+const springOK = springDetected === 'll' && Object.keys(EXPECT_SPRING_LL).every(k => springTotals[k] === EXPECT_SPRING_LL[k]);
+console.log('  match:', springOK ? '✅' : '❌');
 
 // Quick reconciliation sanity check.
 console.log('\n=== RECONCILE (sample) ===');
@@ -211,5 +245,6 @@ console.log('  mismatched   :', mismatch);
 console.log('  ll-only      :', llOnly);
 console.log('  bd-only      :', bdOnly);
 
-console.log('\nFINAL:', llOK && bdOK ? '✅ PARSER VALIDATED' : '❌ PARSER FAILED');
-process.exit(llOK && bdOK ? 0 : 1);
+const allOK = llOK && bdOK && springOK;
+console.log('\nFINAL:', allOK ? '✅ PARSER VALIDATED' : '❌ PARSER FAILED');
+process.exit(allOK ? 0 : 1);
