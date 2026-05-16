@@ -97,6 +97,9 @@
     border: 1px solid var(--border); border-radius: 10px;
     background: #fafbfc;
     transition: border-color 120ms, background-color 120ms;
+    /* Grid items default to min-content; explicitly allow shrinking so the
+       ellipsis on .slot-sub actually kicks in instead of the slot widening. */
+    min-width: 0; overflow: hidden;
   }
   .slot.filled { background: #f0fdf4; border-color: var(--ok); }
   .slot-icon {
