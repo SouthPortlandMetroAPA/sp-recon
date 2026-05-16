@@ -339,7 +339,8 @@ async function pdfPageLines(file) {
    division reports both put the member# + name (and team# for by-div) on
    one line, and the 6 count integers on the NEXT line. So we pair line
    i (the "header" line) with the first subsequent line that's all-ints. */
-const INT_ROW_RE = /^\d+(?:\s+\d+){5}$/;   // exactly 6 integers, space-separated
+const INT_ROW_RE        = /^\d+(?:\s+\d+){5}$/;                // strict: 6 ints
+const INT_ROW_WITH_TAIL = /^(\d+(?:\s+\d+){5})\s+(\S+)\s*$/;    // 6 ints + 1 trailing token
 
 /* Detect the PDF type from its content (not its filename — users have
    files like "spring_all_xdiv.pdf" that are actually all-league). Returns
@@ -366,11 +367,25 @@ function detectKind(pages) {
 function findIntsAfter(lines, i) {
   // Look ahead a few lines for the int row associated with the header at i.
   // Skip blank lines and page-footer noise. Don't skip past another header.
+  //
+  // The all-league report has a Grand Slam "Yes" column that PDF.js sometimes
+  // places ON THE SAME LINE as the 6 counts (subpixel-Y rounding fluctuation
+  // — same root cause as the original split-row bug, in a different shape).
+  // Accept both strict "0 1 1 2 1 0" and trailing "0 1 1 2 1 0 Yes". The
+  // trailing token (if any) is returned as `tail` for Grand Slam attribution.
   for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
     const ln = lines[j];
     if (!ln) continue;
     if (INT_ROW_RE.test(ln)) {
-      return { ints: ln.trim().split(/\s+/).map(s => parseInt(s, 10)), at: j };
+      return { ints: ln.trim().split(/\s+/).map(s => parseInt(s, 10)), at: j, tail: null };
+    }
+    const m = ln.match(INT_ROW_WITH_TAIL);
+    if (m) {
+      return {
+        ints: m[1].trim().split(/\s+/).map(s => parseInt(s, 10)),
+        at: j,
+        tail: m[2]
+      };
     }
     // If we hit another member#-line or a division header before finding
     // the ints, bail — the row is malformed or the int line was lost.
@@ -418,9 +433,15 @@ function parseAllLeague(pages) {
     const found = findIntsAfter(lines, i);
     if (!found) continue;
     const [rackless, eight_ob, eight_br, nine_os, nine_br, skunk] = found.ints;
+    // Grand Slam is rendered as "Yes" in the APA report when present, blank
+    // when absent. PDF.js places it either as a trailing token on the int
+    // line (found.tail) or on the immediately-following line.
+    let grand_slam = 0;
+    if (found.tail === 'Yes') grand_slam = 1;
+    else if (lines[found.at + 1] === 'Yes') grand_slam = 1;
     rows.push({ member_number, member_name,
                 rackless, eight_ob, eight_br, nine_os, nine_br, skunk,
-                grand_slam: 0 });
+                grand_slam });
     i = found.at;  // advance past the int line so it isn't re-matched
   }
   // Dedup by member_number (multi-page repeats — unlikely but defensive).
